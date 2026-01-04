@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:corn_disease_app/services/firebase_service.dart';
 import './login_screen.dart';
-
+import './history_screen.dart'; // Add this import
+import './profile_screen.dart'; // Add this import
+import './detect_disease_screen.dart';
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -86,7 +88,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await FirebaseService.signOut();
 
       // Navigate to login screen and remove all other screens
-       if (!mounted) return; 
+      if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (context) => const LoginScreen(),
@@ -96,32 +98,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _onCameraTap() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Coming Soon!'),
-        content: const Text(
-            'Corn disease detection feature will be available soon.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
+void _onCameraTap() {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => const DetectDiseaseScreen(),
+    ),
+  );
+}
   // Build different content based on selected tab
   Widget _buildTabContent() {
     switch (_selectedIndex) {
       case 0: // Home Tab
         return _buildHomeContent();
       case 1: // History Tab
-        return _buildHistoryContent();
+        return HistoryScreen(
+          userName: _userName,
+          userEmail: _userEmail,
+          userPhotoUrl: _userPhotoUrl,
+        );
       case 2: // Profile Tab
-        return _buildProfileContent();
+        return ProfileScreen(
+          userName: _userName,
+          userEmail: _userEmail,
+          userPhotoUrl: _userPhotoUrl,
+          onSignOut: _handleSignOut,
+          onRefresh: _refreshUserData,
+        );
       default:
         return _buildHomeContent();
     }
@@ -314,261 +317,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildHistoryContent() {
-    return Center(
-      child:ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(
-          scrollbars: false,
-        ),
-        child: SingleChildScrollView(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
-              constraints: BoxConstraints(
-                minHeight: MediaQuery.of(context).size.height -
-                    (kToolbarHeight + kBottomNavigationBarHeight + 40),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.history,
-                    size: 120,
-                    color: Colors.green.shade300,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Scan History',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: 300,
-                    child: Text(
-                      'Your scan history will appear here once you start using the disease detection feature.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey.shade600,
-                        height: 1.5,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                ],
-              ),
-            ),
-          ),
-      ),
-    );
-  }
-
-  Widget _buildProfileContent() {
-     return ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(
-          scrollbars: false,
-        ),
-    
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        // ignore: deprecated_member_use
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 40,
-                        backgroundColor: Colors.green.shade100,
-                        child: _userPhotoUrl != null
-                            ? CircleAvatar(
-                                radius: 38,
-                                backgroundImage: NetworkImage(_userPhotoUrl!),
-                              )
-                            : Icon(
-                                Icons.person,
-                                size: 45,
-                                color: Colors.green.shade800,
-                              ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _userName,
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green.shade900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _userEmail,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.verified,
-                              size: 14,
-                              color: Colors.green.shade700,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Registered User',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.green.shade700,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Account Information - Compact
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.account_circle_outlined,
-                            size: 20,
-                            color: Colors.green.shade700,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Account Info',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade900,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      _buildCompactProfileItem('Name', _userName),
-                      const Divider(height: 16),
-                      _buildCompactProfileItem('Email', _userEmail),
-                      const Divider(height: 16),
-                      _buildCompactProfileItem('Status', 'Active'),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                const SizedBox(height: 20),
-
-                // Sign Out Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _handleSignOut,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.red.shade700,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        side: BorderSide(color: Colors.red.shade200),
-                      ),
-                      elevation: 0,
-                    ),
-                    icon: const Icon(Icons.logout, size: 20),
-                    label: const Text(
-                      'Sign Out',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-        )
-        );
-  }
-
-  Widget _buildCompactProfileItem(String label, String value) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 80,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey.shade600,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -652,22 +400,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
         ],
       ),
-    body: SafeArea(
-  child: ScrollConfiguration(
-    behavior: ScrollConfiguration.of(context).copyWith(
-      scrollbars: false,
-    ),
-    child: SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16.0,
-          vertical: 8.0,
+      body: SafeArea(
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(
+            scrollbars: false,
+          ),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
+              child: _buildTabContent(),
+            ),
+          ),
         ),
-        child: _buildTabContent(),
       ),
-    ),
-  ),
-),
       bottomNavigationBar: Container(
         height: 80,
         decoration: BoxDecoration(

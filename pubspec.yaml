@@ -8,6 +8,9 @@ environment:
   sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
+  file_picker: ^5.3.3  # Web-compatible
+  image_picker: ^1.0.4
+  permission_handler: ^10.4.4
   flutter:
     sdk: flutter
   # Google Sign-In

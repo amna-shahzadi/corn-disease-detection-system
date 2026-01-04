@@ -2,10 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-<key>NSCameraUsageDescription</key>
-<string>We need camera access to detect corn diseases</string>
-<key>NSPhotoLibraryUsageDescription</key>
-<string>We need photo library access to save captured images</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Need camera access to update profile picture</string>
+    
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Need photo library access to select profile picture</string>
+    
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Need photo library access to save profile picture</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
