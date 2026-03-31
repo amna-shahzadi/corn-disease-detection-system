@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'registration_screen.dart';
 import 'forget_password_screen.dart';
 import 'dashboard_screen.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../services/firebase_service.dart';
+import '../config/api_config.dart';
+import '../services/api_service.dart';
+import '../services/auth_session.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,6 +19,40 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isGoogleLoading = false;
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+
+  /// Persist backend session details (including location) to [AuthSession].
+  /// This fetches the latest user profile from the backend using [userId]
+  /// so that the dashboard can immediately show location-based tips after login.
+  Future<void> _saveBackendSession(LoginResponse loginResponse, String fallbackEmail) async {
+    String? userId = loginResponse.userId;
+    String? username = loginResponse.username;
+    String email = (loginResponse.email ?? fallbackEmail).trim();
+    String? phoneNumber;
+    String? location;
+    String? profilePicture;
+
+    if (userId != null && userId.isNotEmpty) {
+      try {
+        final profile = await ApiService.getUserProfile(userId);
+        username = profile.username ?? username;
+        email = (profile.email ?? email).trim();
+        phoneNumber = profile.phoneNumber;
+        location = profile.location;
+        profilePicture = profile.profilePicture;
+      } catch (_) {
+        // If profile fetch fails, we still save the basic login info.
+      }
+    }
+
+    await AuthSession.setBackendLoggedIn(
+      email: email,
+      username: username,
+      userId: userId,
+      phoneNumber: phoneNumber,
+      location: location,
+      profilePicture: profilePicture,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -111,7 +147,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: 20),
 
                 // Email/Phone Field
                 Container(
@@ -127,13 +163,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         vertical: 14,
                       ),
                       border: InputBorder.none,
-                      hintText: 'Enter your email or phone number',
+                      hintText: 'Enter your email address',
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
 
                 // Password Field
                 Container(
@@ -166,7 +202,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
 
                 // Login Button
                 SizedBox(
@@ -182,39 +218,28 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     child: const Text(
-                      'Log in',
+                      'Sign in',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 10),
 
                 // OR Divider
                 Row(
                   children: [
-                    Expanded(
-                      child: Divider(color: Colors.grey[400], thickness: 1),
-                    ),
+                    Expanded(child: Divider(color: Colors.grey[400], thickness: 1)),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'OR',
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                      child: Text('OR', style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500)),
                     ),
-                    Expanded(
-                      child: Divider(color: Colors.grey[400], thickness: 1),
-                    ),
+                    Expanded(child: Divider(color: Colors.grey[400], thickness: 1)),
                   ],
                 ),
+                const SizedBox(height: 10),
 
-                const SizedBox(height: 24),
-
-                // Continue with Google Button
+                // Continue with Google
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
@@ -222,63 +247,29 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: Colors.grey[400]!),
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     child: _isGoogleLoading
-                        ? const SizedBox(
-                            height: 24,
-                            width: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2))
                         : Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              // Google Logo
                               SizedBox(
                                 width: 24,
                                 height: 24,
                                 child: Image.asset(
                                   'assets/images/google_logo.png',
                                   fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      width: 24,
-                                      height: 24,
-                                      decoration: BoxDecoration(
-                                        color: Colors.blue[50],
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Center(
-                                        child: Text(
-                                          'G',
-                                          style: TextStyle(
-                                            color: Colors.blue[700],
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                  errorBuilder: (_, __, ___) => Icon(Icons.g_mobiledata, size: 24, color: Colors.grey[700]),
                                 ),
                               ),
                               const SizedBox(width: 12),
-                              Text(
-                                'Continue with Google',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.grey[800],
-                                ),
-                              ),
+                              Text('Continue with Google', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Colors.grey[800])),
                             ],
                           ),
                   ),
                 ),
-
-                const SizedBox(height: 24),
+                const SizedBox(height: 10),
 
                 Center(
                   child: TextButton(
@@ -300,7 +291,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
 
                 // Sign up section
                 Center(
@@ -332,54 +323,63 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  void _signInWithGoogle() async {
+  Future<void> _signInWithGoogle() async {
     if (!mounted) return;
-    
-    setState(() {
-      _isGoogleLoading = true;
-    });
-
+    setState(() => _isGoogleLoading = true);
     try {
-      final userCredential = await FirebaseService.signInWithGoogle();
-      
-      if (userCredential != null && mounted) {
-        final isNewUser = FirebaseService.isNewUser(userCredential);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isNewUser ? 'Welcome! Account created.' : 'Welcome back!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => const DashboardScreen(),
-          ),
-        );
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sign-in was cancelled'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+      final googleSignIn = GoogleSignIn(
+        clientId: ApiConfig.googleWebClientId.isEmpty ? null : ApiConfig.googleWebClientId,
+      );
+      final account = await googleSignIn.signIn();
+      if (account == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Google sign-in was cancelled'), backgroundColor: Colors.orange),
+          );
+        }
+        return;
       }
-    } catch (error) {
+      final auth = await account.authentication;
+      final idToken = auth.idToken;
+      final accessToken = auth.accessToken;
+      if ((idToken == null || idToken.isEmpty) &&
+          (accessToken == null || accessToken.isEmpty)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Google sign-in on this browser did not return a usable token. Please try again or use email & password.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      final loginResponse = await ApiService.loginWithGoogle(
+        idToken: idToken ?? '',
+        accessToken: accessToken,
+      );
+      await _saveBackendSession(loginResponse, account.email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Signed in with Google'), backgroundColor: Colors.green),
+      );
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const DashboardScreen(showLoginSuccess: true)),
+      );
+    } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $error'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google sign-in failed: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isGoogleLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isGoogleLoading = false);
     }
   }
 
@@ -410,6 +410,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     // Show loading
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Logging in...'),
@@ -419,81 +420,38 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     try {
-      // Firebase authentication only
-      final userCredential = await FirebaseService.loginWithEmailAndPassword(email, password);
-      
-      if (userCredential != null) {
-        // Clear fields
-        _emailController.clear();
-        _passwordController.clear();
-          if (!mounted) return;
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Login successful!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Navigate to dashboard
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => const DashboardScreen(),
-          ),
-        );
-      } else {
-        // Handle null userCredential (login failed but no exception thrown)
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Login failed. Please check your credentials.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      // Handle specific Firebase authentication errors
-      String errorMessage;
-      
-      switch (e.code) {
-        case 'user-not-found':
-          errorMessage = 'No user found with this email.';
-          break;
-        case 'wrong-password':
-          errorMessage = 'Incorrect password. Please try again.';
-          break;
-        case 'invalid-email':
-          errorMessage = 'Invalid email address format.';
-          break;
-        case 'user-disabled':
-          errorMessage = 'This account has been disabled.';
-          break;
-        case 'too-many-requests':
-          errorMessage = 'Too many failed attempts. Please try again later.';
-          break;
-        default:
-          errorMessage = 'Login failed: ${e.message}';
-      }
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMessage),
-          backgroundColor: Colors.red,
+      final loginResponse = await ApiService.login(email: email, password: password);
+      await _saveBackendSession(loginResponse, email);
+
+      _emailController.clear();
+      _passwordController.clear();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => const DashboardScreen(showLoginSuccess: true),
         ),
       );
-    } on Exception catch (error) {
-      // Handle other exceptions
+    } on ApiException catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('An error occurred: $error'),
+          content: Text(e.message),
           backgroundColor: Colors.red,
         ),
       );
     } catch (error) {
-      // Catch any other errors
+      if (!mounted) return;
+      final errStr = error.toString().toLowerCase();
+      final isInvalidCredential = errStr.contains('invalid-credential') ||
+          errStr.contains('auth credential') ||
+          errStr.contains('incorrect, malformed or has expired');
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('An unexpected error occurred. Please try again.'),
+        SnackBar(
+          content: Text(
+            isInvalidCredential
+                ? 'Invalid email or password. Use the email and password you used to register (not Google).'
+                : 'An error occurred: $error',
+          ),
           backgroundColor: Colors.red,
         ),
       );

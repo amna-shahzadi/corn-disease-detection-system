@@ -1,19 +1,25 @@
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:corn_disease_app/services/api_service.dart';
+import 'package:corn_disease_app/services/auth_session.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final String userName;
   final String userEmail;
   final String? userPhotoUrl;
+  final String? userId;
   final String? farmLocation;
+  final String? userPhone;
 
   const EditProfileScreen({
     super.key,
     required this.userName,
     required this.userEmail,
     this.userPhotoUrl,
+    this.userId,
     this.farmLocation = 'Multan, Punjab',
+    this.userPhone,
   });
 
   @override
@@ -24,11 +30,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   late TextEditingController _passwordController;
+  late TextEditingController _phoneController;
   late TextEditingController _locationController;
-  late TextEditingController _farmSizeController;
   
-  File? _selectedImage;
+  Uint8List? _selectedImageBytes;
   String _selectedDistrict = 'Multan';
+  bool _isSaving = false;
+  bool _removePhoto = false;
+  Uint8List? _currentProfileImageBytes;
+  bool _isLoadingProfileImage = true;
 
   final ImagePicker _picker = ImagePicker();
   
@@ -53,8 +63,54 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _nameController = TextEditingController(text: widget.userName);
     _emailController = TextEditingController(text: widget.userEmail);
     _passwordController = TextEditingController(text: '');
+    _phoneController = TextEditingController(text: widget.userPhone ?? '');
     _locationController = TextEditingController(text: widget.farmLocation);
-    _farmSizeController = TextEditingController(text: '5 Acres');
+    
+    // Load current profile image if user ID exists
+    if (widget.userId != null && widget.userId!.isNotEmpty) {
+      _loadCurrentProfileImage();
+    }
+  }
+
+  Future<void> _loadCurrentProfileImage() async {
+    if (widget.userId == null) return;
+    
+    try {
+      // Try to fetch profile image bytes to bypass CORS (same as profile screen)
+      if (widget.userPhotoUrl != null && widget.userPhotoUrl!.isNotEmpty) {
+        try {
+          final imageBytes = await ApiService.getProfileImageBytes(widget.userId!);
+          if (mounted) {
+            setState(() {
+              _currentProfileImageBytes = imageBytes;
+              _isLoadingProfileImage = false;
+            });
+          }
+        } catch (e) {
+          // If image fetch fails, keep using network image fallback
+          print('Image bytes fetch error: $e');
+          if (mounted) {
+            setState(() {
+              _isLoadingProfileImage = false;
+            });
+          }
+        }
+      } else {
+        // No photo URL, set loading to false
+        if (mounted) {
+          setState(() {
+            _isLoadingProfileImage = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Profile image load error: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingProfileImage = false;
+        });
+      }
+    }
   }
 
   @override
@@ -62,8 +118,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _phoneController.dispose();
     _locationController.dispose();
-    _farmSizeController.dispose();
     super.dispose();
   }
 
@@ -116,7 +172,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 },
               ),
               Divider(color: Colors.grey.shade300, height: 1),
-              if (_selectedImage != null || widget.userPhotoUrl != null)
+              if (_selectedImageBytes != null || widget.userPhotoUrl != null)
                 ListTile(
                   leading: Icon(
                     Icons.delete_outline,
@@ -128,7 +184,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   onTap: () {
                     setState(() {
-                      _selectedImage = null;
+                      _selectedImageBytes = null;
+                      _removePhoto = true;
                     });
                     Navigator.pop(context);
                   },
@@ -141,7 +198,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  // Function to pick image with better error handling
+  // Function to pick image (works on web and mobile - uses bytes, not File)
   Future<void> _pickImage(ImageSource source) async {
     try {
       final XFile? pickedFile = await _picker.pickImage(
@@ -152,55 +209,123 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
 
       if (pickedFile != null) {
-        // Validate that the file exists before using it
-        final file = File(pickedFile.path);
-        if (await file.exists()) {
+        final bytes = await pickedFile.readAsBytes();
+        if (mounted) {
           setState(() {
-            _selectedImage = file;
+            _selectedImageBytes = bytes;
+            _removePhoto = false;
           });
-        } else {
-          _showSnackBar('Selected image file does not exist');
         }
       }
     } catch (e) {
-      _showSnackBar('Failed to pick image: ${e.toString()}');
+      if (mounted) _showSnackBar('Failed to pick image: ${e.toString()}');
     }
   }
 
-  void _saveChanges() {
-    // Validate form
-    if (_nameController.text.isEmpty) {
+  Future<void> _saveChanges() async {
+    if (_nameController.text.trim().isEmpty) {
       _showSnackBar('Please enter your full name');
       return;
     }
 
-    if (_locationController.text.isEmpty) {
-      _showSnackBar('Please select farm location');
+    if (_locationController.text.trim().isEmpty) {
+      _showSnackBar('Please enter farm location');
       return;
     }
 
-    // Show success message
-    _showSnackBar('Profile updated successfully!', isError: false);
-    
-    // Delay navigation to show success message
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    // Phone number is optional, no validation needed
+
+    final userId = widget.userId;
+    if (userId == null || userId.isEmpty) {
+      _showSnackBar('Cannot update profile: user not identified');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final username = _nameController.text.trim();
+      final location = _locationController.text.trim();
+
+      // Always use multipart /users/edit/{user_id}/ so that phone_number and
+      // location are updated consistently, with or without a new photo.
+      await ApiService.updateUser(
+        userId: userId,
+        username: username,
+        phoneNumber: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
+        location: location,
+        profilePictureBytes: _selectedImageBytes,
+        removeProfilePicture: _removePhoto,
+      );
+      await AuthSession.setBackendLoggedIn(
+        email: widget.userEmail,
+        username: username,
+        userId: userId,
+        phoneNumber: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
+      );
+
+      if (!mounted) return;
+      _showSnackBar('Profile updated successfully!', isError: false);
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
       Navigator.pop(context, {
-        'name': _nameController.text,
-        'location': _locationController.text,
-        'farmSize': _farmSizeController.text,
-        'image': _selectedImage,
+        'name': username,
+        'location': location,
+        'imageBytes': _selectedImageBytes,
       });
-    });
+    } on ApiException catch (e) {
+      if (mounted) _showSnackBar(e.message);
+    } catch (e) {
+      if (mounted) _showSnackBar('Failed to update: $e');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   void _showSnackBar(String message, {bool isError = true}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        duration: const Duration(seconds: 2),
+        content: Row(
+          children: [
+            Icon(
+              isError ? Icons.error_outline : Icons.check_circle_outline,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(message),
+            ),
+          ],
+        ),
+        backgroundColor: isError ? Colors.red.shade600 : Colors.green.shade600,
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
       ),
     );
+  }
+
+  String _formatPhoneNumber(String value) {
+    // Remove any non-digit characters
+    final digitsOnly = value.replaceAll(RegExp(r'\D'), '');
+    // Limit to 11 digits
+    if (digitsOnly.length > 11) {
+      return digitsOnly.substring(0, 11);
+    }
+    return digitsOnly;
+  }
+
+  void _onPhoneChanged(String value) {
+    final formatted = _formatPhoneNumber(value);
+    if (_phoneController.text != formatted) {
+      _phoneController.value = TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+      );
+    }
   }
 
   void _showDistrictPicker() {
@@ -276,47 +401,81 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  // Safe image widget builder
+  // Safe image widget builder (uses bytes so it works on web)
   Widget _buildProfileImage() {
-    if (_selectedImage != null) {
-      // Check if file exists and is valid
-      return FutureBuilder<bool>(
-        future: _selectedImage!.exists(),
-        builder: (context, snapshot) {
-          if (snapshot.data == true) {
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(48),
-              child: Image.file(
-                _selectedImage!,
-                width: 96,
-                height: 96,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  // If there's an error loading the image, show placeholder
-                  return Icon(
-                    Icons.person,
-                    size: 50,
-                    color: Colors.green.shade800,
-                  );
-                },
-              ),
-            );
-          } else {
-            // File doesn't exist, show placeholder
+    // Show loading indicator while fetching the correct image
+    if (_isLoadingProfileImage && widget.userPhotoUrl != null && widget.userPhotoUrl!.isNotEmpty) {
+      return const CircularProgressIndicator(
+        strokeWidth: 2,
+        valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+      );
+    }
+    
+    if (_selectedImageBytes != null && _selectedImageBytes!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(48),
+        child: Image.memory(
+          _selectedImageBytes!,
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
             return Icon(
               Icons.person,
               size: 50,
               color: Colors.green.shade800,
             );
-          }
-        },
+          },
+        ),
+      );
+    } else if (_removePhoto) {
+      // Explicitly removed by user: show default icon.
+      return Icon(
+        Icons.person,
+        size: 50,
+        color: Colors.green.shade800,
+      );
+    } else if (_currentProfileImageBytes != null && _currentProfileImageBytes!.isNotEmpty) {
+      // Show current profile image from bytes (same as profile screen)
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(48),
+        child: Image.memory(
+          _currentProfileImageBytes!,
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Icon(
+              Icons.person,
+              size: 50,
+              color: Colors.green.shade800,
+            );
+          },
+        ),
       );
     } else if (widget.userPhotoUrl != null && widget.userPhotoUrl!.isNotEmpty) {
-      // Show network image from URL
-      return CircleAvatar(
-        radius: 48,
-        backgroundImage: NetworkImage(widget.userPhotoUrl!),
-        backgroundColor: Colors.transparent,
+      // Correct URL by removing /app prefix if present
+      String correctedUrl = widget.userPhotoUrl!;
+      if (correctedUrl.startsWith('/app/media/')) {
+        correctedUrl = correctedUrl.replaceFirst('/app/media/', '/media/');
+      }
+      
+      // Show network image from URL, with graceful fallback if it fails.
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(48),
+        child: Image.network(
+          correctedUrl,
+          width: 96,
+          height: 96,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return Icon(
+              Icons.person,
+              size: 50,
+              color: Colors.green.shade800,
+            );
+          },
+        ),
       );
     } else {
       // Show default icon
@@ -352,7 +511,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: _saveChanges,
+            onPressed: _isSaving ? null : _saveChanges,
             child: Text(
               'Save',
               style: TextStyle(
@@ -367,19 +526,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            return SingleChildScrollView(
-              padding: EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: constraints.maxHeight > 600 ? 20 : 10,
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: constraints.maxHeight,
+            return ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: constraints.maxHeight > 600 ? 20 : 10,
                 ),
-                child: IntrinsicHeight(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
                       // Profile Picture Section
                       GestureDetector(
                         onTap: _showImageSourceDialog,
@@ -410,7 +571,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       Text(
                         'Tap to change profile picture',
                         style: TextStyle(
@@ -419,7 +580,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ),
                       ),
 
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 15),
 
                       // Personal Information Section
                       _buildSectionHeader('Personal Information'),
@@ -434,8 +595,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       
                       const SizedBox(height: 16),
-                      
-                      // Email (Read-only)
+                         // Email (Read-only)
                       TextFormField(
                         controller: _emailController,
                         readOnly: true,
@@ -443,36 +603,37 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           color: Colors.grey.shade700,
                         ),
                         decoration: InputDecoration(
-                          labelText: 'Email / Phone',
+                          labelText: 'Email',
                           labelStyle: TextStyle(
                             color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          hintText: 'Email address',
+                          hintStyle: TextStyle(
+                            color: Colors.grey.shade400,
                           ),
                           prefixIcon: Icon(
                             Icons.email_outlined,
                             color: Colors.grey.shade600,
+                            size: 20,
                           ),
                           filled: true,
                           fillColor: Colors.grey.shade50,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
                           enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(
-                              color: Color.fromARGB(255, 49, 47, 47),
-                              width: 1,
-                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
                           ),
                           focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade400,
-                              width: 1,
-                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade400, width: 2),
                           ),
                           disabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade300,
-                              width: 1,
-                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
                           ),
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 16,
@@ -482,6 +643,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
 
                       const SizedBox(height: 24),
+  
+                      // Phone Number
+                      _buildFormField(
+                        label: 'Phone Number',
+                        icon: Icons.phone_outlined,
+                        controller: _phoneController,
+                        hintText: '03XXXXXXXXX',
+                        keyboardType: TextInputType.phone,
+                        onChanged: _onPhoneChanged,
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
 
                       // Farm Information Section
                       _buildSectionHeader('Farm Information'),
@@ -498,7 +672,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color.fromARGB(255, 44, 44, 44)),
+                            border: Border.all(color: Colors.grey.shade300),
                           ),
                           child: Row(
                             children: [
@@ -513,9 +687,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   children: [
                                     Text(
                                       'Farm Location',
-                                      style: TextStyle(
+                                      style:  TextStyle(
                                         fontSize: 12,
-                                        color: Colors.grey.shade600,
+                                        color: Colors.black,
                                       ),
                                     ),
                                     const SizedBox(height: 4),
@@ -524,6 +698,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                       style: const TextStyle(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w500,
+                                        color: Color.fromARGB(255, 12, 12, 12),
                                       ),
                                     ),
                                   ],
@@ -538,29 +713,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ),
                       ),
                       
-                      const SizedBox(height: 16),
-                      
-                      // Farm Size
-                      _buildFormField(
-                        label: 'Farm Size',
-                        icon: Icons.landscape_outlined,
-                        controller: _farmSizeController,
-                        hintText: 'e.g., 5 Acres or 2 Hectares',
-                        keyboardType: TextInputType.number,
-                      ),
-
+                    
                       const Spacer(),
                       
                       // Action Buttons
                       Column(
                         children: [
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 15),
                           
                           // Save Button
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: _saveChanges,
+                              onPressed: _isSaving ? null : _saveChanges,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green.shade900,
                                 foregroundColor: Colors.white,
@@ -570,13 +735,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 ),
                                 elevation: 2,
                               ),
-                              child: const Text(
-                                'Save All Changes',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              child: _isSaving
+                                  ? const SizedBox(
+                                      height: 22,
+                                      width: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Save All Changes',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                             ),
                           ),
                           
@@ -610,6 +784,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                 ),
               ),
+              ),
             );
           },
         ),
@@ -637,38 +812,59 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     required TextEditingController controller,
     required String hintText,
     TextInputType keyboardType = TextInputType.text,
+    String? errorText,
+    Function(String)? onChanged,
   }) {
     return TextFormField(
       controller: controller,
+      style: const TextStyle(
+        color: Color.fromARGB(255, 12, 12, 12),
+        fontSize: 16,
+      ),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: TextStyle(color: Colors.grey.shade600),
+        labelStyle: TextStyle(
+          color: Colors.grey.shade700,
+          fontWeight: FontWeight.w500,
+        ),
+        hintText: hintText,
+        hintStyle: TextStyle(
+          color: Colors.grey.shade400,
+        ),
         prefixIcon: Icon(
           icon,
           color: Colors.green.shade700,
+          size: 20,
         ),
-        filled: true,
-        fillColor: Colors.white,
+        filled: false,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: Colors.grey.shade300),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: Colors.green.shade700, width: 2),
         ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.red.shade400, width: 1.5),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.red.shade600, width: 2),
+        ),
+        errorText: errorText,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 16,
         ),
-        hintText: hintText,
-        hintStyle: TextStyle(
-          fontSize: 14,
-          color: Colors.grey.shade500,
-        ),
       ),
-      style: const TextStyle(fontSize: 15),
       keyboardType: keyboardType,
+      onChanged: onChanged,
     );
   }
 }

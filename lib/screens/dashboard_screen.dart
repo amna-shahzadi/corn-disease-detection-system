@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:corn_disease_app/services/firebase_service.dart';
+import 'package:corn_disease_app/services/auth_session.dart';
 import './login_screen.dart';
 import './history_screen.dart'; // Add this import
 import './profile_screen.dart'; // Add this import
 import './detect_disease_screen.dart';
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.showLoginSuccess = false});
+
+  final bool showLoginSuccess;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -17,32 +19,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _userName = 'Farmer';
   String _userEmail = '';
   String? _userPhotoUrl;
+  String? _userId;
+  String? _userPhone;
+  String? _userLocation;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
+    if (widget.showLoginSuccess) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Login successful!'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      });
+    }
   }
 
   Future<void> _loadUserData() async {
     await Future.delayed(const Duration(milliseconds: 500));
 
-    final user = FirebaseService.getCurrentUser();
+    final backendLoggedIn = await AuthSession.isBackendLoggedIn();
+    final backendEmail = await AuthSession.getBackendEmail();
+    final backendUsername = await AuthSession.getBackendUsername();
+    final backendUserId = await AuthSession.getBackendUserId();
+    final backendPhone = await AuthSession.getBackendPhoneNumber();
+    final backendLocation = await AuthSession.getBackendLocation();
+    final backendProfilePicture = await AuthSession.getBackendProfilePicture();
 
     setState(() {
-      if (user != null) {
-        // Firebase user exists (Google or registered email)
-        _userName = user.displayName ?? 'Farmer';
-        _userEmail = user.email ?? '';
-        _userPhotoUrl = user.photoURL;
+      if (backendLoggedIn) {
+        _userName = backendUsername?.isNotEmpty == true ? backendUsername! : 'Farmer';
+        _userEmail = backendEmail ?? '';
+        _userPhotoUrl = backendProfilePicture;
+        _userId = backendUserId;
+        _userPhone = backendPhone;
+        _userLocation = backendLocation;
         _isLoading = false;
       } else {
-        // No Firebase user = Not logged in
-        // Don't set any user data, navigate to login
         _isLoading = false;
-
-        // Navigate to login after a short delay to avoid context issues
         WidgetsBinding.instance.addPostFrameCallback((_) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
@@ -61,31 +83,170 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _loadUserData();
   }
 
+  /// Tips and news with optional location (null = show to all).
+  /// `location` should be a short region tag like "Punjab", "Multan", etc.
+  static const List<Map<String, String?>> _allTips = [
+    {'type': 'Tip', 'title': 'Rotate crops annually', 'description': 'Rotating crops helps prevent soil depletion and reduces pest buildup.', 'location': null},
+    {'type': 'News', 'title': 'New pest resistant corn', 'description': 'Scientists have developed a new corn variety resistant to common pests.', 'location': null},
+    {'type': 'Notification', 'title': 'Harvest season coming!', 'description': 'Prepare your equipment for the upcoming harvest season.', 'location': null},
+    {'type': 'Tip', 'title': 'Punjab: Optimal maize sowing window', 'description': 'In Punjab, mid-Feb to March is ideal for spring maize. Avoid late sowing to reduce pest pressure.', 'location': 'Punjab'},
+    {'type': 'News', 'title': 'Multan corn yield trials', 'description': 'High-yield corn trials in Multan region show 15% improvement with new irrigation schedule.', 'location': 'Multan'},
+    {'type': 'Tip', 'title': 'Lahore area: Soil testing', 'description': 'Get your soil tested before kharif in Lahore division for better fertilizer use.', 'location': 'Lahore'},
+    {'type': 'Notification', 'title': 'Faisalabad mandi rates', 'description': 'Corn prices in Faisalabad mandi are stable. Good time to plan harvest sales.', 'location': 'Faisalabad'},
+    {'type': 'Tip', 'title': 'Sahiwal: Water management', 'description': 'In Sahiwal region, use drip irrigation for maize to save water and improve yield.', 'location': 'Sahiwal'},
+    {'type': 'News', 'title': 'Bahawalpur seed subsidy', 'description': 'Government seed subsidy for cotton and maize available for Bahawalpur farmers.', 'location': 'Bahawalpur'},
+  ];
+
+  /// Tips that apply to any farmer (no specific location).
+  List<Map<String, String?>> get _globalTips {
+    return _allTips.where((t) {
+      final tipLoc = t['location'];
+      return tipLoc == null || tipLoc.trim().isEmpty;
+    }).toList();
+  }
+
+  /// Tips that match the user's selected location from Edit Profile.
+  /// Matches if the saved location string contains the tip's `location` tag.
+  List<Map<String, String?>> get _locationSpecificTips {
+    final loc = _userLocation?.trim().toLowerCase() ?? '';
+    return _allTips.where((t) {
+      final tipLoc = t['location']?.trim().toLowerCase();
+      if (tipLoc == null || tipLoc.isEmpty) return false;
+      if (loc.isEmpty) return false;
+      return loc.contains(tipLoc);
+    }).toList();
+  }
+
   Future<void> _handleSignOut() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign Out'),
-        content: const Text('Are you sure you want to sign out?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        elevation: 8,
+        backgroundColor: Colors.white,
+        child: Container(
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Sign Out',
-              style: TextStyle(color: Colors.red),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning Icon with App Theme
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.green.shade200,
+                    width: 2,
+                  ),
+                ),
+                child: Icon(
+                  Icons.exit_to_app_rounded,
+                  size: 40,
+                  color: Colors.green.shade700,
+                ),
+              ),
+              const SizedBox(height: 24),
+              
+              // Title
+              Text(
+                'Sign Out',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green.shade900,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              
+              // Message
+              Text(
+                'Are you sure you want to Sign out?',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey.shade700,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              
+              // Action Buttons
+              Column(
+                children: [
+                  // Sign Out Button (Primary)
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade900,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 3,
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.logout_rounded, size: 20),
+                          SizedBox(width: 8),
+                          Text(
+                            'Sign Out',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Cancel Button (Secondary)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        foregroundColor: Colors.grey.shade700,
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
 
     if (confirmed == true) {
-      // Sign out from Firebase
-      await FirebaseService.signOut();
+      await AuthSession.clearBackendSession();
 
       // Navigate to login screen and remove all other screens
       if (!mounted) return;
@@ -116,12 +277,15 @@ void _onCameraTap() {
           userName: _userName,
           userEmail: _userEmail,
           userPhotoUrl: _userPhotoUrl,
+          userId: _userId,
         );
       case 2: // Profile Tab
         return ProfileScreen(
           userName: _userName,
           userEmail: _userEmail,
           userPhotoUrl: _userPhotoUrl,
+          userId: _userId,
+          userPhone: _userPhone,
           onSignOut: _handleSignOut,
           onRefresh: _refreshUserData,
         );
@@ -287,27 +451,68 @@ void _onCameraTap() {
                     ),
                 ],
               ),
+              if (_userLocation != null && _userLocation!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'For: $_userLocation',
+                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                  ),
+                ),
               const SizedBox(height: 15),
-              _buildTipCard(
-                type: 'Tip',
-                title: 'Rotate crops annually',
-                description:
-                    'Rotating crops helps prevent soil depletion and reduces pest buildup.',
-              ),
-              const SizedBox(height: 10),
-              _buildTipCard(
-                type: 'News',
-                title: 'New pest resistant corn',
-                description:
-                    'Scientists have developed a new corn variety resistant to common pests.',
-              ),
-              const SizedBox(height: 10),
-              _buildTipCard(
-                type: 'Notification',
-                title: 'Harvest season coming!',
-                description:
-                    'Prepare your equipment for the upcoming harvest season.',
-              ),
+
+              // When no location is set, show only global tips.
+              if (_userLocation == null || _userLocation!.isEmpty) ...[
+                if (_globalTips.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'No tips available yet. Please try again later.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    ),
+                  )
+                else
+                  ..._globalTips.map((t) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildTipCard(
+                          type: t['type']!,
+                          title: t['title']!,
+                          description: t['description']!,
+                          location: null,
+                        ),
+                      )),
+              ]
+              // When location is set, show ONLY location-specific tips.
+              else ...[
+                if (_locationSpecificTips.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'No tips available yet for your selected location.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    ),
+                  )
+                else ...[
+                  Text(
+                    'For your area',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green[900],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._locationSpecificTips.map((t) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildTipCard(
+                          type: t['type']!,
+                          title: t['title']!,
+                          description: t['description']!,
+                          location: t['location'],
+                        ),
+                      )),
+                ],
+              ],
             ],
           ),
         ),
@@ -563,6 +768,7 @@ void _onCameraTap() {
     required String type,
     required String title,
     required String description,
+    String? location,
   }) {
     Color typeColor = Colors.grey;
     Color bgColor = Colors.grey[100]!;
@@ -585,45 +791,72 @@ void _onCameraTap() {
         borderRadius: BorderRadius.circular(12.0),
         border: Border.all(color: bgColor.withValues(alpha: 0.5)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: typeColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: typeColor.withValues(alpha: 0.3)),
-            ),
-            child: Text(
-              type,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: typeColor,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: typeColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: typeColor.withValues(alpha: 0.3)),
+                ),
+                child: Text(
+                  type,
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: Colors.green[900],
+                    color: typeColor,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              const SizedBox(width: 8),
+              if (location != null && location.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green[100]!),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 14,
+                        color: Colors.green[700],
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        location,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.green[900],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Colors.green[900],
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: const TextStyle(fontSize: 13, color: Colors.black87),
           ),
         ],
       ),

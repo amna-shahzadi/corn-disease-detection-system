@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import '../services/api_service.dart';
 
 class HistoryScreen extends StatefulWidget {
   final String userName;
   final String userEmail;
   final String? userPhotoUrl;
+  final String? userId;
 
   const HistoryScreen({
     super.key,
     required this.userName,
     required this.userEmail,
     this.userPhotoUrl,
+    this.userId,
   });
 
   @override
@@ -17,58 +20,83 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  // List of all history items
-  final List<HistoryItem> _allHistoryItems = [
-    HistoryItem(
-      title: 'Disease Detected',
-      subTitle: 'Gray Leaf Spot',
-      date: '2023-10-26',
-      time: '14:30',
-      isHealthy: false,
-      diseaseType: 'Gray Leaf Spot',
-      originalOrder: 0,
-    ),
-    HistoryItem(
-      title: 'Healthy Leaf',
-      subTitle: 'No disease detected',
-      date: '2023-10-26',
-      time: '09:15',
-      isHealthy: true,
-      diseaseType: null,
-      originalOrder: 1,
-    ),
-    HistoryItem(
-      title: 'Disease Detected',
-      subTitle: 'Fusarium Ear Root',
-      date: '2023-10-25',
-      time: '11:00',
-      isHealthy: false,
-      diseaseType: 'Fusarium Ear Root',
-      originalOrder: 2,
-    ),
-    HistoryItem(
-      title: 'Healthy Leaf',
-      subTitle: 'No disease detected',
-      date: '2023-10-24',
-      time: '16:45',
-      isHealthy: true,
-      diseaseType: null,
-      originalOrder: 3,
-    ),
-    HistoryItem(
-      title: 'Disease Detected',
-      subTitle: 'Common Rust',
-      date: '2023-10-23',
-      time: '10:30',
-      isHealthy: false,
-      diseaseType: 'Common Rust',
-      originalOrder: 4,
-    ),
-  ];
+  // List of all history items (loaded from backend)
+  List<HistoryItem> _allHistoryItems = [];
+  int _currentPage = 1;
+  bool _hasMorePages = true;
+  bool _isLoadingMore = false;
 
   // Filter state
   FilterType _currentFilter = FilterType.showAll;
   bool _isDateSortedDescending = true; // Newest first by default
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final userId = widget.userId;
+    if (userId == null || userId.isEmpty) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'User not identified for history.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _currentPage = 1;
+      _allHistoryItems.clear();
+    });
+
+    try {
+      final responses = await ApiService.getHistory(userId: userId, page: 1);
+      final items = <HistoryItem>[];
+      for (var i = 0; i < responses.length; i++) {
+        final h = responses[i];
+        final isHealthy = h.isHealthy;
+        final title = h.title ?? (isHealthy ? 'Healthy Leaf' : 'Disease Detected');
+        final subTitle = h.diseaseName ??
+            (isHealthy ? 'No disease detected' : (h.raw?['status']?.toString() ?? 'Disease detected'));
+        items.add(
+          HistoryItem(
+            title: title,
+            subTitle: subTitle,
+            date: h.date ?? '',
+            time: h.time ?? '',
+            isHealthy: isHealthy,
+            diseaseType: h.diseaseName,
+            originalOrder: i,
+          ),
+        );
+      }
+      setState(() {
+        _allHistoryItems = items;
+        _isLoading = false;
+        _hasMorePages = responses.length > 0; // If we got items, there might be more pages
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _errorMessage = e.message;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to load history: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshHistory() async {
+    await _loadHistory();
+  }
 
   // Get filtered and sorted items
   List<HistoryItem> get _filteredItems {
@@ -120,6 +148,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
                 const Spacer(),
+                // Refresh button
+                IconButton(
+                  onPressed: _refreshHistory,
+                  icon: Icon(
+                    Icons.refresh,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
                 // Filter/Search button with badge if filtered
                 Stack(
                   children: [
@@ -157,27 +193,41 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ),
 
-          // Show active filter chip
+          // Show active filter chip (custom container so text stays white)
           if (_currentFilter != FilterType.showAll)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(
                 children: [
-                  FilterChip(
-                    label: Text(
-                      _currentFilter == FilterType.healthyOnly
-                          ? 'Healthy Only'
-                          : 'Disease Only',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                      ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.green[700],
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                    selected: true,
-                    onSelected: null,
-                    backgroundColor: Colors.green[700],
-                    selectedColor: Colors.green[700],
-                    checkmarkColor: Colors.white,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _currentFilter == FilterType.healthyOnly
+                              ? Icons.check_circle
+                              : Icons.warning,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _currentFilter == FilterType.healthyOnly
+                              ? 'Healthy Only'
+                              : 'Disease Only',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(width: 8),
                   GestureDetector(
@@ -199,24 +249,52 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ),
 
-          // History List
-          Column(
-            children: _filteredItems
-                .map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _buildHistoryCard(
-                      title: item.title,
-                      subTitle: item.subTitle,
-                      date: item.date,
-                      time: item.time,
-                      isHealthy: item.isHealthy,
-                      diseaseType: item.diseaseType,
+          // History content
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (_errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+              child: Text(
+                _errorMessage!,
+                style: TextStyle(fontSize: 14, color: Colors.red.shade700),
+              ),
+            )
+          else if (_filteredItems.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+              child: Text(
+                'No history records found yet. Start a scan to see your detection history here.',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            )
+          else
+            Column(
+              children: _filteredItems
+                  .map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildHistoryCard(
+                        title: item.title,
+                        subTitle: item.subTitle,
+                        date: item.date,
+                        time: item.time,
+                        isHealthy: item.isHealthy,
+                        diseaseType: item.diseaseType,
+                      ),
                     ),
-                  ),
-                )
-                .toList(),
-          ),
+                  )
+                  .toList(),
+            ),
 
           const SizedBox(height: 40),
         ],
@@ -369,76 +447,83 @@ class _HistoryScreenState extends State<HistoryScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
+        final maxHeight = MediaQuery.of(context).size.height * 0.6;
         return Container(
+          constraints: BoxConstraints(maxHeight: maxHeight),
           padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+            child: SingleChildScrollView(
+              child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Filter History',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[900],
+                const SizedBox(height: 20),
+                Text(
+                  'Filter History',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green[900],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              _buildFilterOption(
-                'Show All',
-                Icons.list,
-                FilterType.showAll,
-                _currentFilter == FilterType.showAll,
-              ),
-              _buildFilterOption(
-                'Healthy Only',
-                Icons.check_circle,
-                FilterType.healthyOnly,
-                _currentFilter == FilterType.healthyOnly,
-              ),
-              _buildFilterOption(
-                'Disease Only',
-                Icons.warning,
-                FilterType.diseaseOnly,
-                _currentFilter == FilterType.diseaseOnly,
-              ),
-              Divider(color: Colors.grey.shade300),
-              const SizedBox(height: 10),
-              Text(
-                'Sort Options',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade700,
+                const SizedBox(height: 20),
+                _buildFilterOption(
+                  'Show All',
+                  Icons.list,
+                  FilterType.showAll,
+                  _currentFilter == FilterType.showAll,
                 ),
-              ),
-              const SizedBox(height: 10),
-              _buildSortOption(
-                'Newest First',
-                Icons.arrow_downward,
-                true,
-                _isDateSortedDescending,
-              ),
-              _buildSortOption(
-                'Oldest First',
-                Icons.arrow_upward,
-                false,
-                !_isDateSortedDescending,
-              ),
-              const SizedBox(height: 20),
-            ],
+                _buildFilterOption(
+                  'Healthy Only',
+                  Icons.check_circle,
+                  FilterType.healthyOnly,
+                  _currentFilter == FilterType.healthyOnly,
+                ),
+                _buildFilterOption(
+                  'Disease Only',
+                  Icons.warning,
+                  FilterType.diseaseOnly,
+                  _currentFilter == FilterType.diseaseOnly,
+                ),
+                Divider(color: Colors.grey.shade300),
+                const SizedBox(height: 10),
+                Text(
+                  'Sort Options',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _buildSortOption(
+                  'Newest First',
+                  Icons.arrow_downward,
+                  true,
+                  _isDateSortedDescending,
+                ),
+                _buildSortOption(
+                  'Oldest First',
+                  Icons.arrow_upward,
+                  false,
+                  !_isDateSortedDescending,
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
+        ),
         );
       },
     );

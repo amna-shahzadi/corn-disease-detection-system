@@ -1,18 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:corn_disease_app/services/firebase_service.dart';
 import 'screens/login_screen.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  try {
-    // Initialize Firebase
-    await FirebaseService.initialize();
-    debugPrint('Firebase initialized successfully');
-  } catch (e) {
-    debugPrint('Error initializing Firebase: $e');
-  }
-  
   runApp(const CornDiseaseApp());
 }
 

@@ -1,6 +1,10 @@
-import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
+import '../services/api_service.dart';
+import '../config/api_config.dart';
 
 class DetectDiseaseScreen extends StatefulWidget {
   const DetectDiseaseScreen({super.key});
@@ -10,12 +14,18 @@ class DetectDiseaseScreen extends StatefulWidget {
 }
 
 class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
-  File? _selectedImage;
+  /// Image bytes for display and API (works on mobile and web)
+  Uint8List? _selectedImageBytes;
   bool _isProcessing = false;
   String? _diseaseResult;
   String? _confidenceLevel;
+  DetectDiseaseResponse? _detectionResponse;
+  double? _originalImageWidth;
+  double? _originalImageHeight;
 
   final ImagePicker _picker = ImagePicker();
+
+  bool get _hasImage => _selectedImageBytes != null && _selectedImageBytes!.isNotEmpty;
 
   Future<void> _pickImageFromGallery() async {
     try {
@@ -27,8 +37,9 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
       );
 
       if (image != null) {
+        final bytes = await image.readAsBytes();
         setState(() {
-          _selectedImage = File(image.path);
+          _selectedImageBytes = bytes;
           _diseaseResult = null;
           _confidenceLevel = null;
         });
@@ -48,8 +59,9 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
       );
 
       if (image != null) {
+        final bytes = await image.readAsBytes();
         setState(() {
-          _selectedImage = File(image.path);
+          _selectedImageBytes = bytes;
           _diseaseResult = null;
           _confidenceLevel = null;
         });
@@ -60,38 +72,76 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
   }
 
   void _detectDisease() async {
-    if (_selectedImage == null) {
+    if (!_hasImage) {
       _showError('Please select an image first');
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _isProcessing = true;
     });
 
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      final bytes = _selectedImageBytes;
+      if (bytes == null || bytes.isEmpty) {
+        _showError('Could not read image data');
+        return;
+      }
+      
+      // Debug: Print image info
+      print('DEBUG: Image bytes length: ${bytes.length}');
+      print('DEBUG: Image bytes type: ${bytes.runtimeType}');
+      
+      // Simple format detection
+      String filename = 'image.jpg';
+      if (bytes.length >= 4) {
+        // PNG signature: 89 50 4E 47
+        if (bytes[0] == 0x89 && bytes[1] == 0x50 && 
+            bytes[2] == 0x4E && bytes[3] == 0x47) {
+          filename = 'image.png';
+          print('DEBUG: Detected PNG format');
+        }
+        // JPEG signature: FF D8 FF
+        else if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+          filename = 'image.jpg';
+          print('DEBUG: Detected JPEG format');
+        }
+      }
+      
+      print('DEBUG: Using filename: $filename');
+      print('DEBUG: Sending to endpoint: ${ApiConfig.detectPath}');
+      
+      final result = await ApiService.detectDiseaseFromBytes(bytes, filename);
 
-    final mockDiseases = [
-      {'name': 'Common Rust', 'confidence': '92%'},
-      {'name': 'Northern Leaf Blight', 'confidence': '87%'},
-      {'name': 'Gray Leaf Spot', 'confidence': '78%'},
-      {'name': 'Healthy Corn', 'confidence': '95%'},
-    ];
-
-    final randomResult = mockDiseases[DateTime.now().millisecond % mockDiseases.length];
-
-    setState(() {
-      _isProcessing = false;
-      _diseaseResult = randomResult['name'];
-      _confidenceLevel = randomResult['confidence'];
-    });
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _detectionResponse = result;
+        _diseaseResult = result.diseaseName ?? result.message ?? 'Unknown';
+        _confidenceLevel = result.confidence != null
+            ? (result.confidence!.endsWith('%') ? result.confidence : '${result.confidence}%')
+            : null;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _isProcessing = false);
+      _showError(e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isProcessing = false);
+      _showError('Detection failed: $e');
+    }
   }
 
   void _clearImage() {
     setState(() {
-      _selectedImage = null;
+      _selectedImageBytes = null;
       _diseaseResult = null;
       _confidenceLevel = null;
+      _detectionResponse = null;
+      _originalImageWidth = null;
+      _originalImageHeight = null;
     });
   }
 
@@ -192,291 +242,504 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
 
               const SizedBox(height: 40),
 
-              // Image Placeholder Section - Matches the screenshot
-              GestureDetector(
-                onTap: () {
-                  showModalBottomSheet(
-                    context: context,
-                    builder: (context) => _buildImageSourceSheet(),
-                  );
-                },
-                child: Container(
-                  width: 300,
-                  height: 250,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.grey[300]!,
-                      width: 2,
-                      style: BorderStyle.solid,
-                    ),
-                  ),
-                  child: Stack(
-                    children: [
-                      // Selected Image
-                      if (_selectedImage != null)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.file(
-                            _selectedImage!,
-                            fit: BoxFit.cover,
-                            width: 300,
-                            height: 250,
-                          ),
-                        ),
+              // Image with Bounding Boxes - Professional Responsive Display
+              if (_hasImage)
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Calculate responsive image size based on screen width
+                      double imageSize = constraints.maxWidth > 600 
+                          ? 400 
+                          : constraints.maxWidth * 0.9;
                       
-                      // Placeholder Content with square brackets
-                      if (_selectedImage == null)
-                        Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                      return Container(
+                        width: imageSize,
+                        height: imageSize,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.08),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Stack(
                             children: [
+                              // Original Image with professional styling
                               Container(
-                                width: 60,
-                                height: 60,
+                                width: imageSize,
+                                height: imageSize,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(30),
-                                  border: Border.all(
-                                    color: Colors.grey[300]!,
-                                    width: 2,
-                                  ),
+                                  color: Colors.grey[50],
                                 ),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  size: 30,
-                                  color: Colors.grey[400],
+                                child: Image.memory(
+                                  _selectedImageBytes!,
+                                  width: imageSize,
+                                  height: imageSize,
+                                  fit: BoxFit.contain,
+                                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                    // Get image dimensions when frame is available
+                                    if (frame != null && _originalImageWidth == null) {
+                                      final codec = ui.instantiateImageCodec(_selectedImageBytes!);
+                                      codec.then((codec) {
+                                        codec.getNextFrame().then((frame) {
+                                          if (mounted) {
+                                            setState(() {
+                                              _originalImageWidth = frame.image.width.toDouble();
+                                              _originalImageHeight = frame.image.height.toDouble();
+                                            });
+                                          }
+                                        });
+                                      });
+                                    }
+                                    return child;
+                                  },
                                 ),
                               ),
-                              const SizedBox(height: 15),
+                              
+                              // Bounding Boxes Overlay with proper scaling
+                              if (_detectionResponse?.detections != null && _originalImageWidth != null)
+                                ..._detectionResponse!.detections!.map(
+                                  (detection) => _buildScaledBoundingBox(detection, imageSize, imageSize),
+                                ).toList(),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+              // Image Placeholder when no image selected
+              if (!_hasImage)
+                GestureDetector(
+                  onTap: () {
+                    showModalBottomSheet(
+                      context: context,
+                      builder: (context) => _buildImageSourceSheet(),
+                    );
+                  },
+                  child: Container(
+                    width: 350,
+                    height: 300,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.grey[300]!,
+                        width: 2,
+                        style: BorderStyle.solid,
+                      ),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(30),
+                              border: Border.all(
+                                color: Colors.grey[300]!,
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.camera_alt,
+                              size: 30,
+                              color: Colors.grey[400],
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            'Tap to capture or upload image',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 30),
+
+              // Action Buttons (only show when no detection yet)
+              if (_detectionResponse == null)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Capture Button with Icon
+                    ElevatedButton.icon(
+                      onPressed: _captureImageFromCamera,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Color.fromARGB(255, 27, 94, 32),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          side: const BorderSide(
+                            color: Color.fromARGB(255, 27, 94, 32),
+                            width: 1.5,
+                          ),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(
+                        Icons.camera_alt,
+                        size: 20,
+                      ),
+                      label: const Text(
+                        'Capture',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(width: 15),
+                    
+                    // Upload Button with Icon
+                    ElevatedButton.icon(
+                      onPressed: _pickImageFromGallery,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Color.fromARGB(255, 27, 94, 32),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          side: const BorderSide(
+                            color: Color.fromARGB(255, 27, 94, 32),
+                            width: 1.5,
+                          ),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(
+                        Icons.upload,
+                        size: 20,
+                      ),
+                      label: const Text(
+                        'Upload',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+              // Detect Disease Button (only show when no detection yet)
+              if (_detectionResponse == null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: SizedBox(
+                    width: 300,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _hasImage ? _detectDisease : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Color.fromARGB(255, 27, 94, 32),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(25),
+                        ),
+                        elevation: 4,
+                      ),
+                      child: _isProcessing
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Text(
+                            'DETECT DISEASE',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 30),
+
+              // Results Section with Professional Responsive Layout
+              if (_detectionResponse != null)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Summary Header - Responsive
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(MediaQuery.of(context).size.width > 600 ? 24 : 20),
+                        decoration: BoxDecoration(
+                          color: Color.fromARGB(255, 27, 94, 32),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 15,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header Row - Responsive
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.analytics,
+                                  color: Colors.white,
+                                  size: MediaQuery.of(context).size.width > 600 ? 32 : 28,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'Detection Analysis',
+                                    style: TextStyle(
+                                      fontSize: MediaQuery.of(context).size.width > 600 ? 22 : 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: MediaQuery.of(context).size.width > 600 ? 20 : 16),
+                            
+                            // Summary Stats - Responsive Layout
+                            MediaQuery.of(context).size.width > 600
+                                ? Row(
+                                    children: [
+                                      Expanded(
+                                        child: _buildStatCard(
+                                          'Total Detections',
+                                          '${_detectionResponse!.totalDetections ?? 0}',
+                                          Icons.search,
+                                          Colors.blue,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: _buildStatCard(
+                                          'Primary Disease',
+                                          _diseaseResult ?? 'None',
+                                          Icons.bug_report,
+                                          Colors.orange,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    children: [
+                                      _buildStatCard(
+                                        'Total Detections',
+                                        '${_detectionResponse!.totalDetections ?? 0}',
+                                        Icons.search,
+                                        Colors.blue,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      _buildStatCard(
+                                        'Primary Disease',
+                                        _diseaseResult ?? 'None',
+                                        Icons.bug_report,
+                                        Colors.orange,
+                                      ),
+                                    ],
+                                  ),
+                          ],
+                        ),
+                      ),
+                      
+                      SizedBox(height: MediaQuery.of(context).size.width > 600 ? 24 : 20),
+                      
+                      // Individual Detection Cards - Responsive
+                      if (_detectionResponse!.detections != null && _detectionResponse!.detections!.isNotEmpty)
+                        ..._detectionResponse!.detections!.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final detection = entry.value;
+                          return Padding(
+                            padding: EdgeInsets.only(bottom: MediaQuery.of(context).size.width > 600 ? 16 : 12),
+                            child: _buildDetailedDetectionCard(detection, index + 1),
+                          );
+                        }).toList(),
+                      
+                      // Recommendations - Responsive
+                      if (_diseaseResult != null)
+                        Container(
+                          width: double.infinity,
+                          margin: EdgeInsets.only(top: MediaQuery.of(context).size.width > 600 ? 24 : 20),
+                          padding: EdgeInsets.all(MediaQuery.of(context).size.width > 600 ? 24 : 20),
+                          decoration: BoxDecoration(
+                            color: Colors.green[50],
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.green[200]!),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.lightbulb,
+                                    color: Color.fromARGB(255, 27, 94, 32),
+                                    size: MediaQuery.of(context).size.width > 600 ? 28 : 24,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      'Recommendations',
+                                      style: TextStyle(
+                                        fontSize: MediaQuery.of(context).size.width > 600 ? 20 : 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color.fromARGB(255, 27, 94, 32),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: MediaQuery.of(context).size.width > 600 ? 16 : 12),
                               Text(
-                                ' Tap to capture or upload image',
-                                textAlign: TextAlign.center,
+                                _getRecommendedAction(_diseaseResult!),
                                 style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
+                                  fontSize: MediaQuery.of(context).size.width > 600 ? 16 : 14,
+                                  color: Colors.black87,
+                                  height: 1.5,
                                 ),
                               ),
                             ],
                           ),
                         ),
                       
-                      // Clear button when image is selected
-                      if (_selectedImage != null)
-                        Positioned(
-                          top: 10,
-                          right: 10,
-                          child: GestureDetector(
-                            onTap: _clearImage,
-                            child: Container(
-                              width: 30,
-                              height: 30,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.5),
-                                shape: BoxShape.circle,
+                      // Action Buttons After Detection - Responsive
+                      Container(
+                        width: double.infinity,
+                        margin: EdgeInsets.only(top: MediaQuery.of(context).size.width > 600 ? 24 : 20),
+                        child: MediaQuery.of(context).size.width > 600
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: _clearImage,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey[100],
+                                        foregroundColor: Colors.grey[700],
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('New Analysis'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: () {
+                                        _showError('Save functionality coming soon!');
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Color.fromARGB(255, 27, 94, 32),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 2,
+                                      ),
+                                      icon: const Icon(Icons.save),
+                                      label: const Text('Save Results'),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _clearImage,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.grey[100],
+                                        foregroundColor: Colors.grey[700],
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('New Analysis'),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: () {
+                                        _showError('Save functionality coming soon!');
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Color.fromARGB(255, 27, 94, 32),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 16),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        elevation: 2,
+                                      ),
+                                      icon: const Icon(Icons.save),
+                                      label: const Text('Save Results'),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              child: const Icon(
-                                Icons.close,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                          ),
-                        ),
+                      ),
                     ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 40),
-
-              // Action Buttons (Capture and Upload) with Icons and square brackets
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Capture Button with Icon and square brackets
-                  ElevatedButton.icon(
-                    onPressed: _captureImageFromCamera,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Color.fromARGB(255, 27, 94, 32),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(25),
-                        side: const BorderSide(
-                          color: Color.fromARGB(255, 27, 94, 32),
-                          width: 1.5,
-                        ),
-                      ),
-                      elevation: 0,
-                    ),
-                    icon: const Icon(
-                      Icons.camera_alt,
-                      size: 20,
-                    ),
-                    label: const Text(
-                      'Capture',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  
-                  const SizedBox(width: 15),
-                  
-                  // Upload Button with Icon and square brackets
-                  ElevatedButton.icon(
-                    onPressed: _pickImageFromGallery,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Color.fromARGB(255, 27, 94, 32),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(25),
-                        side: const BorderSide(
-                          color: Color.fromARGB(255, 27, 94, 32),
-                          width: 1.5,
-                        ),
-                      ),
-                      elevation: 0,
-                    ),
-                    icon: const Icon(
-                      Icons.upload,
-                      size: 20,
-                    ),
-                    label: const Text(
-                      'Upload',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 50),
-
-              // Detect Disease Button
-              SizedBox(
-                width: 300,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _selectedImage != null ? _detectDisease : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color.fromARGB(255, 27, 94, 32),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    elevation: 4,
-                  ),
-                  child: _isProcessing
-                    ? const SizedBox(
-                        height: 22,
-                        width: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      )
-                    : const Text(
-                        'DETECT DISEASE',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.0,
-                        ),
-                      ),
-                ),
-              ),
-
-              const SizedBox(height: 40),
-
-              // Results Section
-              if (_diseaseResult != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: Colors.green[200]!),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.health_and_safety,
-                              color: Color.fromARGB(255, 27, 94, 32),
-                              size: 28,
-                            ),
-                            const SizedBox(width: 10),
-                            const Text(
-                              'Detection Result',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Color.fromARGB(255, 27, 94, 32),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 15),
-                        Row(
-                          children: [
-                            const Icon(Icons.bug_report, color: Colors.green, size: 22),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Disease: $_diseaseResult',
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            const Icon(Icons.analytics, color: Colors.green, size: 22),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Confidence: $_confidenceLevel',
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 15),
-                        Padding(
-                          padding: const EdgeInsets.only(left: 32),
-                          child: Text(
-                            _getRecommendedAction(_diseaseResult!),
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: Colors.black87,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
 
@@ -484,6 +747,318 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildScaledBoundingBox(DiseaseDetection detection, double displayWidth, double displayHeight) {
+    if (detection.bbox == null || detection.bbox!.length < 4 ||
+        _originalImageWidth == null || _originalImageHeight == null) {
+      print('DEBUG: Skipping detection - missing bbox or dimensions');
+      return const SizedBox.shrink();
+    }
+
+    // Calculate aspect ratio and actual image display area
+    final imageAspectRatio = _originalImageWidth! / _originalImageHeight!;
+    final containerAspectRatio = displayWidth / displayHeight;
+    
+    double actualDisplayWidth, actualDisplayHeight, offsetX, offsetY;
+    
+    if (imageAspectRatio > containerAspectRatio) {
+      // Image is wider than container - fits width, has vertical padding
+      actualDisplayWidth = displayWidth;
+      actualDisplayHeight = displayWidth / imageAspectRatio;
+      offsetX = 0;
+      offsetY = (displayHeight - actualDisplayHeight) / 2;
+    } else {
+      // Image is taller than container - fits height, has horizontal padding
+      actualDisplayWidth = displayHeight * imageAspectRatio;
+      actualDisplayHeight = displayHeight;
+      offsetX = (displayWidth - actualDisplayWidth) / 2;
+      offsetY = 0;
+    }
+
+    // Calculate scaling factors based on actual display area
+    final scaleX = actualDisplayWidth / _originalImageWidth!;
+    final scaleY = actualDisplayHeight / _originalImageHeight!;
+
+    // Scale bounding box coordinates
+    final scaledX = detection.bbox![0] * scaleX + offsetX;
+    final scaledY = detection.bbox![1] * scaleY + offsetY;
+    final scaledWidth = (detection.bbox![2] - detection.bbox![0]) * scaleX;
+    final scaledHeight = (detection.bbox![3] - detection.bbox![1]) * scaleY;
+
+    // Debug logging for each detection
+    print('DEBUG: Detection: ${detection.disease}');
+    print('DEBUG: Original bbox: [${detection.bbox![0]}, ${detection.bbox![1]}, ${detection.bbox![2]}, ${detection.bbox![3]}]');
+    print('DEBUG: Image dimensions: ${_originalImageWidth}x${_originalImageHeight}');
+    print('DEBUG: Display area: ${actualDisplayWidth}x${actualDisplayHeight}');
+    print('DEBUG: Offsets: X=$offsetX, Y=$offsetY');
+    print('DEBUG: Scale factors: X=$scaleX, Y=$scaleY');
+    print('DEBUG: Scaled position: X=$scaledX, Y=$scaledY');
+    print('DEBUG: Scaled size: ${scaledWidth}x${scaledHeight}');
+    print('---');
+
+    // Get color from API or default to red
+    Color boxColor = Colors.red;
+    if (detection.color != null && detection.color!.length >= 3) {
+      boxColor = Color.fromARGB(
+        255,
+        detection.color![0],
+        detection.color![1],
+        detection.color![2],
+      );
+    }
+
+    // Create abbreviated disease name for box
+    String abbreviatedName = _getAbbreviatedDiseaseName(detection.disease ?? 'Unknown');
+
+    return Positioned(
+      top: scaledY,
+      left: scaledX,
+      child: Container(
+        width: scaledWidth,
+        height: scaledHeight,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: boxColor,
+            width: 2,
+          ),
+        ),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Container(
+            margin: const EdgeInsets.all(2),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              '$abbreviatedName (${(detection.confidence! * 100).toStringAsFixed(1)}%)',
+              style: const TextStyle(
+                fontSize: 9,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOriginalBoundingBox(DiseaseDetection detection) {
+    if (detection.bbox == null || detection.bbox!.length < 4) {
+      print('DEBUG: Skipping detection - missing bbox');
+      return const SizedBox.shrink();
+    }
+
+    // Use original API coordinates directly (no scaling)
+    final x = detection.bbox![0];
+    final y = detection.bbox![1];
+    final width = detection.bbox![2] - detection.bbox![0];
+    final height = detection.bbox![3] - detection.bbox![1];
+
+    // Debug logging for each detection
+    print('DEBUG: Detection: ${detection.disease}');
+    print('DEBUG: Original bbox: [${detection.bbox![0]}, ${detection.bbox![1]}, ${detection.bbox![2]}, ${detection.bbox![3]}]');
+    print('DEBUG: Image dimensions: ${_originalImageWidth}x${_originalImageHeight}');
+    print('DEBUG: Using original coordinates - no scaling');
+    print('DEBUG: Box position: X=$x, Y=$y');
+    print('DEBUG: Box size: ${width}x${height}');
+    print('---');
+
+    // Get color from API or default to red
+    Color boxColor = Colors.red;
+    if (detection.color != null && detection.color!.length >= 3) {
+      boxColor = Color.fromARGB(
+        255,
+        detection.color![0],
+        detection.color![1],
+        detection.color![2],
+      );
+    }
+
+    // Create abbreviated disease name for box
+    String abbreviatedName = _getAbbreviatedDiseaseName(detection.disease ?? 'Unknown');
+
+    return Positioned(
+      top: y,
+      left: x,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: boxColor,
+            width: 2,
+          ),
+        ),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Container(
+            margin: const EdgeInsets.all(2),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              '$abbreviatedName (${(detection.confidence! * 100).toStringAsFixed(1)}%)',
+              style: const TextStyle(
+                fontSize: 9,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getAbbreviatedDiseaseName(String diseaseName) {
+    switch (diseaseName.toLowerCase()) {
+      case 'fusarium ear rot':
+        return 'FER';
+      case 'grey leaf spot':
+        return 'GLS';
+      case 'northern leaf blight':
+        return 'NLB';
+      case 'common rust':
+        return 'RUST';
+      case 'healthy corn':
+        return 'HLTH';
+      default:
+        // For unknown diseases, use first 3 letters in uppercase
+        if (diseaseName.length >= 3) {
+          return diseaseName.substring(0, 3).toUpperCase();
+        } else {
+          return diseaseName.toUpperCase();
+        }
+    }
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: 24,
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailedDetectionCard(DiseaseDetection detection, int index) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.green[300]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: detection.color != null 
+                      ? Color.fromARGB(
+                          255, 
+                          detection.color![0], 
+                          detection.color![1], 
+                          detection.color![2],
+                        )
+                      : Colors.green,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  detection.disease ?? 'Unknown Disease',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color.fromARGB(255, 27, 94, 32),
+                  ),
+                ),
+              ),
+              Text(
+                detection.confidence != null 
+                    ? '${(detection.confidence! * 100).toStringAsFixed(1)}%'
+                    : 'N/A',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: detection.confidence != null && detection.confidence! > 0.5
+                      ? Colors.green
+                      : Colors.orange,
+                ),
+              ),
+            ],
+          ),
+          if (detection.bbox != null && detection.bbox!.length >= 4)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.crop_free, size: 16, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Location: (${detection.bbox![0].toStringAsFixed(0)}, ${detection.bbox![1].toStringAsFixed(0)})',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -1,10 +1,15 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'edit_profile_screen.dart';
+import 'package:corn_disease_app/services/api_service.dart';
+import 'package:corn_disease_app/services/auth_session.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String userName;
   final String userEmail;
   final String? userPhotoUrl;
+  final String? userId;
+  final String? userPhone;
   final VoidCallback onSignOut;
   final VoidCallback onRefresh;
   final String? farmLocation;
@@ -17,6 +22,8 @@ class ProfileScreen extends StatefulWidget {
     required this.userName,
     required this.userEmail,
     this.userPhotoUrl,
+    this.userId,
+    this.userPhone,
     required this.onSignOut,
     required this.onRefresh,
     this.farmLocation = 'Multan, Punjab',
@@ -32,8 +39,128 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   bool _isAccountInfoExpanded = false;
   bool _isFarmInfoExpanded = false;
-  
-  
+  UserProfile? _userProfile;
+  bool _profileLoading = false;
+  Uint8List? _profileImageBytes;
+  bool _isLoadingProfileImage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.userId != null && widget.userId!.isNotEmpty) {
+      _loadProfile();
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    if (widget.userId == null) return;
+    setState(() => _profileLoading = true);
+    
+    // Check if we have a photo URL to determine if we need to show image loading
+    final hasPhotoUrl = widget.userPhotoUrl != null && widget.userPhotoUrl!.isNotEmpty;
+    if (hasPhotoUrl) {
+      setState(() => _isLoadingProfileImage = true);
+    }
+    
+    try {
+      final profile = await ApiService.getUserProfile(widget.userId!);
+      if (mounted) {
+        setState(() {
+          _userProfile = profile;
+          _profileLoading = false;
+        });
+        
+        // Try to fetch profile image bytes to bypass CORS
+        if (profile.profilePicture != null && profile.profilePicture!.isNotEmpty) {
+          print('DEBUG: Attempting to fetch profile image bytes...');
+          try {
+            final imageBytes = await ApiService.getProfileImageBytes(widget.userId!);
+            print('DEBUG: Image bytes fetch result: ${imageBytes != null ? "SUCCESS (${imageBytes!.length} bytes)" : "FAILED"}');
+            if (mounted) {
+              setState(() {
+                _profileImageBytes = imageBytes;
+                _isLoadingProfileImage = false;
+              });
+            }
+          } catch (e) {
+            print('DEBUG: Image bytes fetch error: $e');
+            // If image fetch fails, keep using network image fallback
+            if (mounted) {
+              setState(() => _isLoadingProfileImage = false);
+            }
+          }
+        } else {
+          print('DEBUG: No profile picture URL found');
+          if (mounted) {
+            setState(() => _isLoadingProfileImage = false);
+          }
+        }
+        
+        await AuthSession.setBackendLoggedIn(
+          email: profile.email ?? widget.userEmail,
+          username: profile.username,
+          userId: profile.userId,
+          phoneNumber: profile.phoneNumber,
+          location: profile.location,
+          profilePicture: profile.profilePicture,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _profileLoading = false;
+          _isLoadingProfileImage = false;
+        });
+      }
+    }
+  }
+
+  String get _displayName => _userProfile?.username ?? widget.userName;
+  String get _displayEmail => _userProfile?.email ?? widget.userEmail;
+  Uint8List? get _displayPhotoBytes => _profileImageBytes;
+  String? get _displayPhotoUrl {
+    final url = _userProfile?.profilePicture ?? widget.userPhotoUrl;
+    print('DEBUG: Raw profile picture URL: $url');
+    if (url == null || url.isEmpty) return null;
+    
+    // Remove /app prefix if present - Django serves static files from /media, not /app/media
+    final correctedUrl = url.startsWith('/app/media/') 
+        ? url.replaceFirst('/app/media/', '/media/') 
+        : url;
+    print('DEBUG: Corrected profile picture URL: $correctedUrl');
+    return correctedUrl;
+  }
+  String? get _displayLocation => _userProfile?.location ?? widget.farmLocation;
+  String? get _displayPhone => _userProfile?.phoneNumber ?? widget.userPhone;
+
+  /// Builds a fallback avatar with user's initial and a pseudo-random background color.
+  Widget _buildInitialAvatar(double radius) {
+    final name = _displayName.trim();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'F';
+    const colors = [
+      Color(0xFF1B5E20), // dark green
+      Color(0xFF2E7D32),
+      Color(0xFF388E3C),
+      Color(0xFF43A047),
+      Color(0xFF558B2F),
+      Color(0xFF6A1B9A),
+      Color(0xFF1565C0),
+    ];
+    final color = colors[name.hashCode.abs() % colors.length];
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: color,
+      child: Text(
+        initial,
+        style: const TextStyle(
+          fontSize: 28,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ScrollConfiguration(
@@ -121,16 +248,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
               CircleAvatar(
                 radius: 50,
                 backgroundColor: Colors.green.shade100,
-                child: widget.userPhotoUrl != null
-                    ? CircleAvatar(
-                        radius: 48,
-                        backgroundImage: NetworkImage(widget.userPhotoUrl!),
-                      )
-                    : Icon(
+                child: _profileLoading
+                    ? const Icon(
                         Icons.person,
-                        size: 50,
-                        color: Colors.green.shade800,
-                      ),
+                        size: 40,
+                        color: Colors.white,
+                      )
+                    : _isLoadingProfileImage
+                        ? const CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          )
+                        : (_displayPhotoBytes != null
+                            ? ClipOval(
+                                child: Image.memory(
+                                  _displayPhotoBytes!,
+                                  width: 96,
+                                  height: 96,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : (_displayPhotoUrl != null && _displayPhotoUrl!.isNotEmpty
+                                ? ClipOval(
+                                    child: Image.network(
+                                      _displayPhotoUrl!,
+                                      width: 96,
+                                      height: 96,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return _buildInitialAvatar(48);
+                                      },
+                                    ),
+                                  )
+                                : _buildInitialAvatar(48))),
               ),
               Positioned(
                 bottom: 0,
@@ -152,9 +302,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
           const SizedBox(height: 16),
-          Text(
-            widget.userName,
-            style: TextStyle(
+          if (_profileLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            Text(
+              _displayName,
+              style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
               color: Colors.green.shade900,
@@ -269,20 +429,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildAccountInfoContent() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Full Name
         _buildProfileItem(
           icon: Icons.person_outline,
           label: 'Full Name',
-          value: widget.userName,
+          value: _displayName,
         ),
         const SizedBox(height: 16),
-        
-        // Email
         _buildProfileItem(
           icon: Icons.email_outlined,
-          label: 'Email / Phone',
-          value: widget.userEmail,
+          label: 'Email',
+          value: _displayEmail,
+        ),
+        const SizedBox(height: 16),
+        _buildProfileItem(
+          icon: Icons.phone_outlined,
+          label: 'Phone Number',
+          value: (_displayPhone != null && _displayPhone!.isNotEmpty)
+              ? _displayPhone!
+              : 'Not set',
         ),
         const SizedBox(height: 16),
       ],
@@ -292,23 +458,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildFarmInfoContent() {
     return Column(
       children: [
-        // Farm Location
         _buildProfileItem(
           icon: Icons.location_on_outlined,
-          label: 'Farm Location',
-          value: widget.farmLocation!,
-          isEditable: true,
+          label: 'Location',
+          value: _displayLocation ?? 'Not set',
+          
         ),
         const SizedBox(height: 16),
-        // Farm Size
-        _buildProfileItem(
-          icon: Icons.landscape_outlined,
-          label: 'Farm Size',
-          value: '5 Acres',
-          isEditable: true,
-        ),
-        const SizedBox(height: 16),
-       
       ],
     );
   }
@@ -326,12 +482,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     context,
                     MaterialPageRoute(
                       builder: (context) => EditProfileScreen(
-                        userName: widget.userName,
-                        userEmail: widget.userEmail,
-                        userPhotoUrl: widget.userPhotoUrl,
+                        userName: _displayName,
+                        userEmail: _displayEmail,
+                        userPhotoUrl: _displayPhotoUrl,
+                        userId: widget.userId,
+                        userPhone: _displayPhone,
+                        farmLocation: _displayLocation ?? widget.farmLocation,
                       ),
                     ),
-                  );
+                  ).then((result) {
+                    if (result != null && mounted) {
+                      widget.onRefresh();
+                      _loadProfile();
+                    }
+                  });
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green.shade900,
