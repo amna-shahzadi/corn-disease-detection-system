@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../services/auth_session.dart';
 import '../config/api_config.dart';
 
 class DetectDiseaseScreen extends StatefulWidget {
@@ -112,7 +113,14 @@ class _DetectDiseaseScreenState extends State<DetectDiseaseScreen> {
       print('DEBUG: Using filename: $filename');
       print('DEBUG: Sending to endpoint: ${ApiConfig.detectPath}');
       
-      final result = await ApiService.detectDiseaseFromBytes(bytes, filename);
+      // Get current user ID to save prediction to history
+      final userId = await AuthSession.getBackendUserId();
+      
+      final result = await ApiService.detectDiseaseFromBytes(
+        bytes, 
+        filename, 
+        userId: userId,
+      );
 
       if (!mounted) return;
       setState(() {

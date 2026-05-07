@@ -289,11 +289,13 @@ class ApiService {
   static String get _base => ApiConfig.baseUrl;
 
   /// Detect disease from image bytes (works on mobile and web).
-  /// Endpoint: POST /predict with multipart form field "image".
+  /// Endpoint: POST /api/prediction/predict/ with multipart form field "image" and optional "user_id".
+  /// If user_id is provided, prediction is saved to history for that user.
   static Future<DetectDiseaseResponse> detectDiseaseFromBytes(
     Uint8List imageBytes,
-    String filename,
-  ) async {
+    String filename, {
+    String? userId,
+  }) async {
     final uri = Uri.parse('$_base${ApiConfig.detectPath}');
     final request = http.MultipartRequest('POST', uri);
     
@@ -312,6 +314,11 @@ class ApiService {
       contentType: MediaType.parse(contentType),
     ));
 
+    // Add user_id if provided to save to history
+    if (userId != null && userId.isNotEmpty) {
+      request.fields['user_id'] = userId;
+    }
+
     final streamed = await request.send().timeout(_timeout);
     final response = await http.Response.fromStream(streamed);
 
@@ -329,7 +336,7 @@ class ApiService {
     String message = 'Detection failed (${response.statusCode})';
     if (response.statusCode == 404) {
       message = 'Prediction endpoint not found (404). '
-          'Endpoint is now correctly set to /predict.';
+          'Endpoint is now correctly set to /api/prediction/predict/.';
     } else {
       try {
         final json = jsonDecode(response.body);
@@ -853,6 +860,45 @@ class ApiService {
       throw ApiException('Invalid history response: $e', 0);
     }
     return [];
+  }
+
+  /// Fetch detection history with count for dashboard.
+  /// Uses GET /users/history/{user_id}/?page=1
+  /// Returns count and data for total scans and last scan
+  static Future<Map<String, dynamic>> getHistoryWithCount({
+    required String userId,
+  }) async {
+    if (userId.isEmpty) {
+      throw ApiException('User id is required for history', 0);
+    }
+    final path = '${ApiConfig.historyPath}/$userId/?page=1';
+
+    final response = await _client.get(Uri.parse('$_base$path')).timeout(_timeout);
+
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Failed to load history (${response.statusCode})',
+        response.statusCode,
+      );
+    }
+
+    try {
+      final json = jsonDecode(response.body) as Map<String, dynamic>?;
+      if (json != null) {
+        return {
+          'success': json['success'] ?? false,
+          'count': json['count'] ?? 0,
+          'data': json['data'] ?? [],
+        };
+      }
+    } catch (e) {
+      throw ApiException('Invalid history response: $e', 0);
+    }
+    return {
+      'success': false,
+      'count': 0,
+      'data': [],
+    };
   }
 
   /// Health check / ping backend

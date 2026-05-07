@@ -1,13 +1,51 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:corn_disease_app/services/auth_session.dart';
+import 'package:corn_disease_app/services/api_service.dart';
 import './login_screen.dart';
-import './history_screen.dart'; // Add this import
-import './profile_screen.dart'; // Add this import
+import './history_screen.dart';
+import './profile_screen.dart';
 import './detect_disease_screen.dart';
+
+// ─── Design tokens ───────────────────────────────────────────────────
+class _AppColors {
+  static const primary       = Color(0xFF1A4D1E);
+  static const primaryLight  = Color(0xFF2E7D32);
+  static const surface       = Color(0xFFF1F8E9);
+  static const surfaceMid    = Color(0xFFE8F5E9);
+  static const accent        = Color(0xFF81C784);
+  static const textPrimary   = Color(0xFF1A4D1E);
+  static const textSecondary = Color(0xFF666666);
+  static const textMuted     = Color(0xFF9E9E9E);
+  static const divider       = Color(0xFFE8F5E9);
+}
+
+// ─── Tips data ────────────────────────────────────────────────────────────────
+enum _TipType { tip, news, notification }
+
+class _TipItem {
+  final _TipType type;
+  final String title;
+  final String description;
+  final String? location;
+  const _TipItem(this.type, this.title, this.description, {this.location});
+}
+
+const _allTips = [
+  _TipItem(_TipType.tip,          'Rotate crops annually',          'Rotating crops helps prevent soil depletion and reduces pest buildup.'),
+  _TipItem(_TipType.news,         'New pest resistant corn',        'Scientists have developed a new corn variety resistant to common pests.'),
+  _TipItem(_TipType.notification, 'Harvest season coming!',         'Prepare your equipment for the upcoming harvest season.'),
+  _TipItem(_TipType.tip,          'Punjab: Optimal sowing window',  'Mid-Feb to March is ideal for spring maize. Avoid late sowing to reduce pest pressure.', location: 'Punjab'),
+  _TipItem(_TipType.news,         'Multan corn yield trials',       'High-yield corn trials in Multan show 15 % improvement with new irrigation schedule.',     location: 'Multan'),
+  _TipItem(_TipType.tip,          'Lahore area: Soil testing',      'Get your soil tested before kharif in Lahore division for better fertilizer use.',          location: 'Lahore'),
+  _TipItem(_TipType.notification, 'Faisalabad mandi rates',         'Corn prices in Faisalabad mandi are stable. Good time to plan harvest sales.',             location: 'Faisalabad'),
+  _TipItem(_TipType.tip,          'Sahiwal: Water management',      'Use drip irrigation for maize to save water and improve yield.',                            location: 'Sahiwal'),
+  _TipItem(_TipType.news,         'Bahawalpur seed subsidy',        'Government seed subsidy for cotton and maize available for Bahawalpur farmers.',            location: 'Bahawalpur'),
+];
+
+// ─── Widget ───────────────────────────────────────────────────────────────────
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key, this.showLoginSuccess = false});
-
   final bool showLoginSuccess;
 
   @override
@@ -15,850 +53,864 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  int _selectedIndex = 0;
-  String _userName = 'Farmer';
-  String _userEmail = '';
+  // ── state ──────────────────────────────────────────────────────────────────
+  int    _selectedIndex = 0;
+  String _userName      = 'Farmer';
+  String _userEmail     = '';
   String? _userPhotoUrl;
   String? _userId;
   String? _userPhone;
   String? _userLocation;
-  bool _isLoading = true;
 
+  bool   _isLoading     = true;
+  int    _totalScans    = 0;
+  Map<String, dynamic>? _lastScan;
+  bool   _hasLoadedStats = false;
+
+  // PageController for tips
+  final PageController _tipsCtrl = PageController(viewportFraction: 0.92);
+  int _tipPage = 0;
+
+  // ── lifecycle ──────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
     _loadUserData();
     if (widget.showLoginSuccess) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Login successful!'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Login successful!'),
+            backgroundColor: _AppColors.primaryLight,
+            duration: Duration(seconds: 2),
+          ),
+        );
       });
     }
   }
 
+  // ── data loading ───────────────────────────────────────────────────────────
   Future<void> _loadUserData() async {
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 300));
 
-    final backendLoggedIn = await AuthSession.isBackendLoggedIn();
-    final backendEmail = await AuthSession.getBackendEmail();
-    final backendUsername = await AuthSession.getBackendUsername();
-    final backendUserId = await AuthSession.getBackendUserId();
-    final backendPhone = await AuthSession.getBackendPhoneNumber();
-    final backendLocation = await AuthSession.getBackendLocation();
+    final backendLoggedIn      = await AuthSession.isBackendLoggedIn();
+    final backendEmail         = await AuthSession.getBackendEmail();
+    final backendUsername      = await AuthSession.getBackendUsername();
+    final backendUserId        = await AuthSession.getBackendUserId();
+    final backendPhone         = await AuthSession.getBackendPhoneNumber();
+    final backendLocation      = await AuthSession.getBackendLocation();
     final backendProfilePicture = await AuthSession.getBackendProfilePicture();
 
+    if (!backendLoggedIn) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    // Debug: Print user data to see what's being loaded
+    debugPrint('Backend username: $backendUsername');
+    debugPrint('Backend email: $backendEmail');
+    debugPrint('Backend profile picture: $backendProfilePicture');
+    
     setState(() {
-      if (backendLoggedIn) {
-        _userName = backendUsername?.isNotEmpty == true ? backendUsername! : 'Farmer';
-        _userEmail = backendEmail ?? '';
-        _userPhotoUrl = backendProfilePicture;
-        _userId = backendUserId;
-        _userPhone = backendPhone;
-        _userLocation = backendLocation;
-        _isLoading = false;
-      } else {
-        _isLoading = false;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => const LoginScreen(),
-            ),
-          );
-        });
-      }
+      _userName     = backendUsername?.isNotEmpty == true ? backendUsername! : 'Farmer';
+      _userEmail    = backendEmail ?? '';
+      _userPhotoUrl = backendProfilePicture;
+      _userId       = backendUserId;
+      _userPhone    = backendPhone;
+      _userLocation = backendLocation;
+      _isLoading    = false;
     });
+    
+    // Debug: Print final user name
+    debugPrint('Final user name: $_userName');
+
+    if (backendUserId != null && !_hasLoadedStats) {
+      await _loadScanStatistics(backendUserId);
+    }
+  }
+
+  Future<void> _loadScanStatistics(String userId) async {
+    try {
+      final historyData = await ApiService.getHistoryWithCount(userId: userId);
+      if (!mounted) return;
+      setState(() {
+        _totalScans = historyData['count'] ?? 0;
+        final dataList = historyData['data'] as List<dynamic>?;
+        _lastScan       = (dataList?.isNotEmpty == true) ? dataList!.first as Map<String, dynamic> : null;
+        _hasLoadedStats = true;
+      });
+    } catch (e) {
+      debugPrint('Failed to load scan statistics: $e');
+    }
   }
 
   Future<void> _refreshUserData() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() { _isLoading = true; _hasLoadedStats = false; _tipPage = 0; });
     await _loadUserData();
   }
 
-  /// Tips and news with optional location (null = show to all).
-  /// `location` should be a short region tag like "Punjab", "Multan", etc.
-  static const List<Map<String, String?>> _allTips = [
-    {'type': 'Tip', 'title': 'Rotate crops annually', 'description': 'Rotating crops helps prevent soil depletion and reduces pest buildup.', 'location': null},
-    {'type': 'News', 'title': 'New pest resistant corn', 'description': 'Scientists have developed a new corn variety resistant to common pests.', 'location': null},
-    {'type': 'Notification', 'title': 'Harvest season coming!', 'description': 'Prepare your equipment for the upcoming harvest season.', 'location': null},
-    {'type': 'Tip', 'title': 'Punjab: Optimal maize sowing window', 'description': 'In Punjab, mid-Feb to March is ideal for spring maize. Avoid late sowing to reduce pest pressure.', 'location': 'Punjab'},
-    {'type': 'News', 'title': 'Multan corn yield trials', 'description': 'High-yield corn trials in Multan region show 15% improvement with new irrigation schedule.', 'location': 'Multan'},
-    {'type': 'Tip', 'title': 'Lahore area: Soil testing', 'description': 'Get your soil tested before kharif in Lahore division for better fertilizer use.', 'location': 'Lahore'},
-    {'type': 'Notification', 'title': 'Faisalabad mandi rates', 'description': 'Corn prices in Faisalabad mandi are stable. Good time to plan harvest sales.', 'location': 'Faisalabad'},
-    {'type': 'Tip', 'title': 'Sahiwal: Water management', 'description': 'In Sahiwal region, use drip irrigation for maize to save water and improve yield.', 'location': 'Sahiwal'},
-    {'type': 'News', 'title': 'Bahawalpur seed subsidy', 'description': 'Government seed subsidy for cotton and maize available for Bahawalpur farmers.', 'location': 'Bahawalpur'},
-  ];
-
-  /// Tips that apply to any farmer (no specific location).
-  List<Map<String, String?>> get _globalTips {
-    return _allTips.where((t) {
-      final tipLoc = t['location'];
-      return tipLoc == null || tipLoc.trim().isEmpty;
-    }).toList();
+  // ── helpers ────────────────────────────────────────────────────────────────
+  String _getGreeting() {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
   }
 
-  /// Tips that match the user's selected location from Edit Profile.
-  /// Matches if the saved location string contains the tip's `location` tag.
-  List<Map<String, String?>> get _locationSpecificTips {
+  String _getLastScanDisplay() {
+    if (_lastScan == null) return 'Never';
+    final time = _lastScan!['time'] as String?;
+    final date = _lastScan!['date'] as String?;
+    if (time == null || date == null) return 'Unknown';
+    try {
+      final scanDate = DateTime.parse('${date}T$time:00');
+      final now = DateTime.now();
+      if (now.year == scanDate.year && now.month == scanDate.month && now.day == scanDate.day) {
+        return 'Today $time';
+      }
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return '${months[scanDate.month - 1]} ${scanDate.day}';
+    } catch (_) {
+      return 'Unknown';
+    }
+  }
+
+  String? _getLastDiseaseName() => _lastScan?['disease'] as String?;
+
+  List<_TipItem> get _visibleTips {
     final loc = _userLocation?.trim().toLowerCase() ?? '';
-    return _allTips.where((t) {
-      final tipLoc = t['location']?.trim().toLowerCase();
-      if (tipLoc == null || tipLoc.isEmpty) return false;
-      if (loc.isEmpty) return false;
-      return loc.contains(tipLoc);
+    if (loc.isEmpty) {
+      return _allTips.where((t) => t.location == null).toList();
+    }
+    final located = _allTips.where((t) {
+      final tl = t.location?.trim().toLowerCase();
+      return tl != null && loc.contains(tl);
     }).toList();
+    return located.isEmpty
+        ? _allTips.where((t) => t.location == null).toList()
+        : located;
   }
+
+  void _onCameraTap() => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => const DetectDiseaseScreen()),
+  );
 
   Future<void> _handleSignOut() async {
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        elevation: 8,
-        backgroundColor: Colors.white,
-        child: Container(
-          padding: const EdgeInsets.all(32),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Warning Icon with App Theme
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.green.shade200,
-                    width: 2,
-                  ),
-                ),
-                child: Icon(
-                  Icons.exit_to_app_rounded,
-                  size: 40,
-                  color: Colors.green.shade700,
-                ),
-              ),
-              const SizedBox(height: 24),
-              
-              // Title
-              Text(
-                'Sign Out',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green.shade900,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              
-              // Message
-              Text(
-                'Are you sure you want to Sign out?',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey.shade700,
-                  height: 1.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              
-              // Action Buttons
-              Column(
-                children: [
-                  // Sign Out Button (Primary)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade900,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 3,
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.logout_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Sign Out',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  // Cancel Button (Secondary)
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        foregroundColor: Colors.grey.shade700,
-                      ),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+      builder: (_) => _SignOutDialog(),
     );
-
-    if (confirmed == true) {
-      await AuthSession.clearBackendSession();
-
-      // Navigate to login screen and remove all other screens
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (context) => const LoginScreen(),
-        ),
-        (route) => false, // Remove all routes
-      );
-    }
+    if (confirmed != true) return;
+    await AuthSession.clearBackendSession();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
   }
 
-void _onCameraTap() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => const DetectDiseaseScreen(),
-    ),
-  );
-}
-  // Build different content based on selected tab
+  // ── tab routing ────────────────────────────────────────────────────────────
   Widget _buildTabContent() {
     switch (_selectedIndex) {
-      case 0: // Home Tab
-        return _buildHomeContent();
-      case 1: // History Tab
+      case 1:
         return HistoryScreen(
-          userName: _userName,
-          userEmail: _userEmail,
-          userPhotoUrl: _userPhotoUrl,
-          userId: _userId,
+          userName: _userName, userEmail: _userEmail,
+          userPhotoUrl: _userPhotoUrl, userId: _userId,
         );
-      case 2: // Profile Tab
+      case 2:
         return ProfileScreen(
-          userName: _userName,
-          userEmail: _userEmail,
-          userPhotoUrl: _userPhotoUrl,
-          userId: _userId,
+          userName: _userName, userEmail: _userEmail,
+          userPhotoUrl: _userPhotoUrl, userId: _userId,
           userPhone: _userPhone,
-          onSignOut: _handleSignOut,
-          onRefresh: _refreshUserData,
+          onSignOut: _handleSignOut, onRefresh: _refreshUserData,
         );
       default:
-        return _buildHomeContent();
+        return _HomeContent(
+          key: ValueKey('homeContent'),
+          isLoading:          _isLoading,
+          userName:           _userName,
+          userEmail:          _userEmail,
+          userLocation:       _userLocation,
+          greeting:           _getGreeting(),
+          totalScans:         _totalScans,
+          lastScanDisplay:    _getLastScanDisplay(),
+          lastDiseaseName:    _getLastDiseaseName(),
+          visibleTips:        _visibleTips,
+          onCameraTap:        _onCameraTap,
+          onRefresh:          _refreshUserData,
+          tipsCtrl:           _tipsCtrl,
+          tipPage:            _tipPage,
+          onPageChanged:       (page) {
+            final roundedPage = page.round();
+            if (roundedPage != _tipPage) {
+              setState(() => _tipPage = roundedPage);
+            }
+          },
+        );
     }
   }
 
-  Widget _buildHomeContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Welcome Section (moved here from top bar)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _isLoading ? 'Welcome...' : 'Welcome, $_userName!',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[900],
-                ),
-              ),
-              if (_userEmail.isNotEmpty && !_isLoading)
-                Text(
-                  _userEmail,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-            ],
-          ),
-        ),
-
-        // Circular Corn Disease Detection Section
-        GestureDetector(
-          onTap: _onCameraTap,
-          child: Center(
-            child: Container(
-              width: 200,
-              height: 200,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(100),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.green[900],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  Container(
-                    width: 140,
-                    height: 140,
-                    decoration: BoxDecoration(
-                      color: Colors.green[900],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  Container(
-                    width: 140,
-                    height: 140,
-                    decoration: const BoxDecoration(shape: BoxShape.circle),
-                    child: const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.camera_alt,
-                          size: 36,
-                          color: Colors.white,
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'DETECT CORN',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        Text(
-                          'DISEASE',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 30),
-
-        // Stats Section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  title: 'Total Scans',
-                  value: '0',
-                  icon: Icons.photo_camera,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  title: 'Last Scan',
-                  value: 'Never',
-                  icon: Icons.access_time,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 30),
-
-        // Agricultural Tips & News Section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    'Agricultural Tips & News',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green[900],
-                    ),
-                  ),
-                  const Spacer(),
-                  if (!_isLoading)
-                    IconButton(
-                      icon: Icon(
-                        Icons.refresh,
-                        color: Colors.green[800],
-                        size: 20,
-                      ),
-                      onPressed: _refreshUserData,
-                    ),
-                ],
-              ),
-              if (_userLocation != null && _userLocation!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    'For: $_userLocation',
-                    style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                  ),
-                ),
-              const SizedBox(height: 15),
-
-              // When no location is set, show only global tips.
-              if (_userLocation == null || _userLocation!.isEmpty) ...[
-                if (_globalTips.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      'No tips available yet. Please try again later.',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                    ),
-                  )
-                else
-                  ..._globalTips.map((t) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _buildTipCard(
-                          type: t['type']!,
-                          title: t['title']!,
-                          description: t['description']!,
-                          location: null,
-                        ),
-                      )),
-              ]
-              // When location is set, show ONLY location-specific tips.
-              else ...[
-                if (_locationSpecificTips.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      'No tips available yet for your selected location.',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                    ),
-                  )
-                else ...[
-                  Text(
-                    'For your area',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green[900],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ..._locationSpecificTips.map((t) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _buildTipCard(
-                          type: t['type']!,
-                          title: t['title']!,
-                          description: t['description']!,
-                          location: t['location'],
-                        ),
-                      )),
-                ],
-              ],
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 80),
-      ],
-    );
-  }
-
+  // ── build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        title: Row(
-          children: [
-            // Logo
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: Image.asset(
-                'assets/images/app_logo.png',
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.eco,
-                      color: Colors.green[800],
-                      size: 24,
-                    ),
-                  );
-                },
-              ),
+      appBar: _selectedIndex == 0 ? _buildAppBar() : null,
+      body: SafeArea(child: _buildTabContent()),
+      bottomNavigationBar: _BottomNav(
+        selectedIndex: _selectedIndex,
+        onTap: (i) => setState(() => _selectedIndex = i),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      titleSpacing: 16,
+      title: Row(
+        children: [
+          // Logo sized appropriately for full screen
+          Container(
+            width: 40, // Optimized size for app bar
+            height: 40, // Optimized size for app bar
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
             ),
-            const SizedBox(width: 12),
-            Text(
-              'Corn Disease Detector',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.green[900],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (!_isLoading)
-            PopupMenuButton<String>(
-              icon: Icon(
-                Icons.more_vert,
-                color: Colors.green[900],
-              ),
-              onSelected: (value) {
-                if (value == 'refresh') {
-                  _refreshUserData();
-                } else if (value == 'profile') {
-                  setState(() {
-                    _selectedIndex = 2;
-                  });
-                }
+            child: Image.asset(
+              'assets/images/app_logo.png',
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.eco,
+                    color: Colors.green[800],
+                    size: 24, // Optimized icon size
+                  ),
+                );
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'refresh',
-                  child: Row(
-                    children: [
-                      Icon(Icons.refresh, size: 20),
-                      SizedBox(width: 8),
-                      Text('Refresh Data'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'profile',
-                  child: Row(
-                    children: [
-                      Icon(Icons.person, size: 20),
-                      SizedBox(width: 8),
-                      Text('Go to Profile'),
-                    ],
-                  ),
-                ),
-              ],
             ),
+          ),
+          Text(
+            'Corn Disease Detector',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: _AppColors.primary,
+            ),
+          ),
         ],
       ),
-      body: SafeArea(
-        child: ScrollConfiguration(
-          behavior: ScrollConfiguration.of(context).copyWith(
-            scrollbars: false,
-          ),
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16.0,
-                vertical: 8.0,
-              ),
-              child: _buildTabContent(),
+      actions: [
+        // Avatar / profile button on right side
+        Padding(
+          padding: const EdgeInsets.only(right: 16),
+          child: GestureDetector(
+            onTap: () => setState(() => _selectedIndex = 2),
+            child: _UserAvatar(
+              name: _userName,
+              photoUrl: _userPhotoUrl,
+              size: 42,
             ),
           ),
         ),
-      ),
-      bottomNavigationBar: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: Colors.green[900],
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              spreadRadius: 2,
-              blurRadius: 10,
-              offset: const Offset(0, -3),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavButton(
-              icon: Icons.home,
-              label: 'Home',
-              index: 0,
-            ),
-            _buildNavButton(
-              icon: Icons.history,
-              label: 'History',
-              index: 1,
-            ),
-            _buildNavButton(
-              icon: Icons.person,
-              label: 'Profile',
-              index: 2,
-            ),
-          ],
-        ),
-      ),
+      ],
     );
   }
+}
 
-  // Widget for bottom navigation buttons
-  Widget _buildNavButton({
-    required IconData icon,
-    required String label,
-    required int index,
-  }) {
-    bool isActive = _selectedIndex == index;
+// ─── Home content ─────────────────────────────────────────────────────────────
+class _HomeContent extends StatelessWidget {
+  const _HomeContent({
+    required this.isLoading,
+    required this.userName,
+    required this.userEmail,
+    required this.userLocation,
+    required this.greeting,
+    required this.totalScans,
+    required this.lastScanDisplay,
+    required this.lastDiseaseName,
+    required this.visibleTips,
+    required this.onCameraTap,
+    required this.onRefresh,
+    required this.tipsCtrl,
+    required this.tipPage,
+    required this.onPageChanged,
+    Key? key,
+  });
 
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        child: Container(
-          height: double.infinity,
-          decoration: BoxDecoration(
-            border: isActive
-                ? const Border(
-                    top: BorderSide(
-                      color: Colors.white,
-                      width: 3.0,
-                    ),
-                  )
-                : null,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 28,
-                color: Colors.white,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                  color: Colors.white,
-                ),
-              ),
-              if (isActive)
-                Container(
-                  margin: const EdgeInsets.only(top: 4),
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  final bool     isLoading;
+  final String   userName;
+  final String   userEmail;
+  final String?  userLocation;
+  final String   greeting;
+  final int      totalScans;
+  final String   lastScanDisplay;
+  final String?  lastDiseaseName;
+  final List<_TipItem> visibleTips;
+  final VoidCallback onCameraTap;
+  final VoidCallback onRefresh;
+  final PageController tipsCtrl;
+  final int tipPage;
+  final Function(int) onPageChanged;
 
-  // Widget for stat cards
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required IconData icon,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      decoration: BoxDecoration(
-        color: Colors.green[50],
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: Colors.green[100]!),
-      ),
+  @override
+  Widget build(BuildContext context) {
+    // Single-page layout — no scroll on home screen
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SizedBox(height: 8),
+
+          // ── Greeting ──────────────────────────────────────────────────────
+          _Greeting(
+            greeting: isLoading ? 'Welcome...' : '$greeting 👋',
+            name:     isLoading ? '' : userName,
+          ),
+          const SizedBox(height: 14),
+
+          // ── Hero CTA ──────────────────────────────────────────────────────
+          _HeroCTA(onTap: onCameraTap),
+          const SizedBox(height: 14),
+
+          // ── Stats row ─────────────────────────────────────────────────────
           Row(
             children: [
-              Icon(icon, color: Colors.green[800], size: 20),
-              const SizedBox(width: 8),
+              Expanded(child: _StatCard(
+                icon:  Icons.document_scanner_rounded,
+                label: 'Total scans',
+                value: isLoading ? '—' : totalScans.toString(),
+                sub:   null,
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: _StatCard(
+                icon:  Icons.schedule_rounded,
+                label: 'Last scan',
+                value: isLoading ? '—' : lastScanDisplay,
+                sub:   lastDiseaseName,
+                smallValue: false,
+              )),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // ── Tips header ───────────────────────────────────────────────────
+          Row(
+            children: [
               Text(
-                title,
+                'Tips & news',
                 style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.green[900],
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: _AppColors.primary,
                 ),
+              ),
+              const Spacer(),
+              if (userLocation != null && userLocation!.isNotEmpty)
+                Row(
+                  children: [
+                    Icon(Icons.location_on_rounded, size: 13, color: _AppColors.primaryLight),
+                    const SizedBox(width: 2),
+                    Text(
+                      userLocation!,
+                      style: const TextStyle(fontSize: 12, color: _AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: onRefresh,
+                child: Icon(Icons.refresh_rounded, size: 18, color: _AppColors.primaryLight),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.green[800],
-            ),
+
+          // ── Tips horizontal PageView ──────────────────────────────
+          // Uses Expanded to consume remaining space — no outer scroll needed
+          Expanded(
+            child: visibleTips.isEmpty
+                ? Center(
+                    child: Text(
+                      'No tips available for your area yet.',
+                      style: TextStyle(fontSize: 13, color: _AppColors.textMuted),
+                    ),
+                  )
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (n) {
+                      if (n is ScrollUpdateNotification) {
+                        final p = tipsCtrl.page?.round() ?? 0;
+                        if (p != tipPage) {
+                          onPageChanged(p);
+                        }
+                      }
+                      return false;
+                    },
+                    child: PageView.builder(
+                      controller: tipsCtrl,
+                      itemCount: visibleTips.length,
+                      itemBuilder: (_, i) => Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: _TipCard(tip: visibleTips[i]),
+                      ),
+                    ),
+                  ),
           ),
+          const SizedBox(height: 8),
+          
+          // ── Tips dot indicator ────────────────────────────────────
+          _tipsDotRow(),
+          const SizedBox(height: 12),
         ],
       ),
     );
   }
 
-  // Widget for tip/news cards
-  Widget _buildTipCard({
-    required String type,
-    required String title,
-    required String description,
-    String? location,
-  }) {
-    Color typeColor = Colors.grey;
-    Color bgColor = Colors.grey[100]!;
+  // ── Tips dot indicator ─────────────────────────────────────────
+  Widget _tipsDotRow() {
+    final count = visibleTips.length;
+    if (count <= 1) return const SizedBox.shrink();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (i) {
+        final active = i == tipPage;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          width: active ? 18 : 6, height: 6,
+          decoration: BoxDecoration(
+            color: active ? _AppColors.primary : _AppColors.divider,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        );
+      }),
+    );
+  }
+}
 
-    if (type == 'Tip') {
-      typeColor = Colors.orange[700]!;
-      bgColor = Colors.orange[50]!;
-    } else if (type == 'News') {
-      typeColor = Colors.blue[700]!;
-      bgColor = Colors.blue[50]!;
-    } else if (type == 'Notification') {
-      typeColor = Colors.red[700]!;
-      bgColor = Colors.red[50]!;
-    }
+// ─── Greeting ─────────────────────────────────────────────────────────────────
+class _Greeting extends StatelessWidget {
+  const _Greeting({required this.greeting, required this.name});
+  final String greeting;
+  final String name;
 
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(greeting, style: const TextStyle(fontSize: 13, color: _AppColors.textSecondary)),
+        if (name.isNotEmpty)
+          Text(
+            name,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: _AppColors.primary),
+          ),
+      ],
+    );
+  }
+}
+
+// ─── Hero CTA ─────────────────────────────────────────────────────────────────
+class _HeroCTA extends StatelessWidget {
+  const _HeroCTA({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        decoration: BoxDecoration(
+          color: _AppColors.primary,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            // Left text block
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text(
+                      'AI DETECTION',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: _AppColors.accent,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Detect corn disease',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Point your camera at any leaf',
+                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.7)),
+                  ),
+                ],
+              ),
+            ),
+
+            // Right camera button
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 2),
+              ),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.camera_alt_rounded, color: Colors.white, size: 26),
+                  SizedBox(height: 2),
+                  Text(
+                    'SCAN',
+                    style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Stat card ────────────────────────────────────────────────────────────────
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.sub,
+    this.smallValue = false,
+  });
+
+  final IconData icon;
+  final String   label;
+  final String   value;
+  final String?  sub;
+  final bool     smallValue;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(color: bgColor.withValues(alpha: 0.5)),
+        color: _AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: typeColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: typeColor.withValues(alpha: 0.3)),
-                ),
-                child: Text(
-                  type,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: typeColor,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (location != null && location.isNotEmpty)
+              Icon(icon, size: 15, color: _AppColors.primaryLight),
+              const SizedBox(width: 5),
+              Text(label, style: const TextStyle(fontSize: 11, color: _AppColors.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: smallValue ? 15 : 22,
+              fontWeight: FontWeight.w700,
+              color: _AppColors.primary,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (sub != null && sub!.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(sub!, style: const TextStyle(fontSize: 10, color: _AppColors.textMuted), maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Tip card ─────────────────────────────────────────────────────────────────
+class _TipCard extends StatelessWidget {
+  const _TipCard({required this.tip});
+  final _TipItem tip;
+
+  @override
+  Widget build(BuildContext context) {
+    // Badge style per type
+    final Color badgeBg;
+    final Color badgeFg;
+    final String badgeLabel;
+    final IconData badgeIcon;
+
+    switch (tip.type) {
+      case _TipType.tip:
+        badgeBg    = const Color(0xFFFFF3E0);
+        badgeFg    = const Color(0xFFE65100);
+        badgeLabel = 'Tip';
+        badgeIcon  = Icons.lightbulb_outline_rounded;
+      case _TipType.news:
+        badgeBg    = const Color(0xFFE3F2FD);
+        badgeFg    = const Color(0xFF1565C0);
+        badgeLabel = 'News';
+        badgeIcon  = Icons.newspaper_rounded;
+      case _TipType.notification:
+        badgeBg    = const Color(0xFFFCE4EC);
+        badgeFg    = const Color(0xFF880E4F);
+        badgeLabel = 'Alert';
+        badgeIcon  = Icons.notifications_outlined;
+    }
+
+    return SizedBox(
+      width: 160,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _AppColors.divider),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Badge
+            Row(
+              children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green[100]!),
+                    color: badgeBg,
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.location_on_outlined,
-                        size: 14,
-                        color: Colors.green[700],
-                      ),
+                      Icon(badgeIcon, size: 11, color: badgeFg),
                       const SizedBox(width: 4),
                       Text(
-                        location,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.green[900],
-                        ),
+                        badgeLabel,
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: badgeFg),
                       ),
                     ],
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: Colors.green[900],
+                if (tip.location != null) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.location_on_rounded, size: 12, color: _AppColors.primaryLight),
+                  Text(
+                    tip.location!,
+                    style: const TextStyle(fontSize: 10, color: _AppColors.textSecondary),
+                  ),
+                ],
+              ],
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            description,
-            style: const TextStyle(fontSize: 13, color: Colors.black87),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              tip.title,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _AppColors.primary),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tip.description,
+              style: const TextStyle(fontSize: 13, color: _AppColors.textSecondary, height: 1.4),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Bottom nav ───────────────────────────────────────────────────────────────
+class _BottomNav extends StatelessWidget {
+  const _BottomNav({required this.selectedIndex, required this.onTap});
+  final int selectedIndex;
+  final ValueChanged<int> onTap;
+
+  static const _items = [
+    (Icons.home_rounded,    Icons.home_outlined,    'Home'),
+    (Icons.history_rounded, Icons.history_rounded,  'History'),
+    (Icons.person_rounded,  Icons.person_outline_rounded, 'Profile'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 68,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: _AppColors.divider, width: 0.5)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: List.generate(_items.length, (i) {
+            final (activeIcon, inactiveIcon, label) = _items[i];
+            final isActive = selectedIndex == i;
+            return Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onTap(i),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Top indicator line
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      height: 2.5,
+                      width: isActive ? 32 : 0,
+                      margin: const EdgeInsets.only(bottom: 6),
+                      decoration: BoxDecoration(
+                        color: _AppColors.primary,
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(2)),
+                      ),
+                    ),
+                    Icon(
+                      isActive ? activeIcon : inactiveIcon,
+                      size: 24,
+                      color: isActive ? _AppColors.primary : _AppColors.textMuted,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                        color: isActive ? _AppColors.primary : _AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── User avatar ──────────────────────────────────────────────────────────────
+class _UserAvatar extends StatelessWidget {
+  const _UserAvatar({required this.name, required this.photoUrl, required this.size});
+  final String  name;
+  final String? photoUrl;
+  final double  size;
+
+  String get _initials {
+    if (name.isEmpty) return 'F';
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    return name[0].toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      radius: size / 2,
+      backgroundColor: _AppColors.surfaceMid,
+      child: Text(_initials, style: TextStyle(fontSize: size * 0.38, fontWeight: FontWeight.w600, color: _AppColors.primary)),
+    );
+  }
+}
+
+// ─── Sign out dialog ──────────────────────────────────────────────────────────
+class _SignOutDialog extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      backgroundColor: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                color: _AppColors.surface,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.exit_to_app_rounded, size: 30, color: _AppColors.primary),
+            ),
+            const SizedBox(height: 20),
+            const Text('Sign out', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: _AppColors.primary)),
+            const SizedBox(height: 10),
+            const Text(
+              'Are you sure you want to sign out?',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: _AppColors.textSecondary),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+                child: const Text('Sign out', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Cancel', style: TextStyle(fontSize: 15, color: _AppColors.textSecondary)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "499793187078",
+    "project_id": "corn-disease-detector",
+    "storage_bucket": "corn-disease-detector.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:499793187078:android:e564f1dab91810f1864e87",
+        "android_client_info": {
+          "package_name": "com.example.corn_disease_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "499793187078-fpjp4t97boe83lncgpbdtnvhepgctsde.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.corn_disease_app",
+            "certificate_hash": "1faf84fa3525d4a56ef92c87f2bc9d7450857b22"
+          }
+        },
+        {
+          "client_id": "499793187078-86nj5e5c5hoku8n3pgvj9ppn7ulnap8k.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDtH-gGOciHVze-gKrSZnoGlLCYLZlciE4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "499793187078-86nj5e5c5hoku8n3pgvj9ppn7ulnap8k.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
