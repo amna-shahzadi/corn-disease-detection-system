@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../l10n/app_localizations.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -41,21 +42,23 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   List<String> _getFailedRequirements(String password) {
+    final l10n = AppLocalizations.of(context)!;
     List<String> failed = [];
     
-    if (password.length < 8) failed.add('At least 8 characters');
-    if (!password.contains(RegExp(r'[A-Z]'))) failed.add('One uppercase letter');
-    if (!password.contains(RegExp(r'[a-z]'))) failed.add('One lowercase letter');
-    if (!password.contains(RegExp(r'[0-9]'))) failed.add('One number');
-    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) failed.add('One special character');
+    if (password.length < 8) failed.add(l10n.forgotPasswordAtLeast8Chars);
+    if (!password.contains(RegExp(r'[A-Z]'))) failed.add(l10n.forgotPasswordOneUppercase);
+    if (!password.contains(RegExp(r'[a-z]'))) failed.add(l10n.forgotPasswordOneLowercase);
+    if (!password.contains(RegExp(r'[0-9]'))) failed.add(l10n.forgotPasswordOneNumber);
+    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) failed.add(l10n.forgotPasswordOneSpecialChar);
     
     return failed;
   }
 
   String _getPasswordError(String password) {
-    if (password.isEmpty) return 'Password is required';
-    if (password.length < 8) return 'Password must be at least 8 characters';
-    if (!_isPasswordValid(password)) return 'Password does not meet requirements';
+    final l10n = AppLocalizations.of(context)!;
+    if (password.isEmpty) return l10n.forgotPasswordPasswordRequired;
+    if (password.length < 8) return l10n.forgotPasswordPasswordMinLength;
+    if (!_isPasswordValid(password)) return l10n.forgotPasswordPasswordRequirements;
     return '';
   }
 
@@ -72,9 +75,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   void _onConfirmPasswordChanged(String value) {
+    final l10n = AppLocalizations.of(context)!;
     if (value.isNotEmpty && value != _newPasswordController.text) {
       setState(() {
-        _passwordError = 'Passwords do not match';
+        _passwordError = l10n.forgotPasswordPasswordsDoNotMatch;
       });
     } else if (value.isNotEmpty && _isPasswordValid(value)) {
       setState(() {
@@ -94,11 +98,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _sendResetCode() async {
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailController.text.trim();
     if (email.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please enter your email address'),
+          content: Text(l10n.forgotPasswordPleaseEnterEmail),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -110,7 +115,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!emailRegex.hasMatch(email)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please enter a valid email address'),
+          content: Text(l10n.forgotPasswordPleaseEnterValidEmail),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -123,7 +128,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('A 6-digit code has been sent to your email'),
+          content: Text(l10n.forgotPasswordCodeSent),
           backgroundColor: Colors.green.shade600,
         ),
       );
@@ -142,7 +147,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to send code: $e'),
+          content: Text('${l10n.forgotPasswordFailedToSendCode}: $e'),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -154,11 +159,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   void _goToPasswordStep() {
+    final l10n = AppLocalizations.of(context)!;
     final code = _codeController.text.trim();
     if (code.isEmpty || code.length < 4) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please enter the verification code sent to your email'),
+          content: Text(l10n.forgotPasswordPleaseEnterCode),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -170,6 +176,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _submitNewPassword() async {
+    final l10n = AppLocalizations.of(context)!;
     final email = _emailController.text.trim();
     final code = _codeController.text.trim();
     final newPassword = _newPasswordController.text;
@@ -178,7 +185,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (newPassword.isEmpty || confirmPassword.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please enter and confirm your new password'),
+          content: Text(l10n.forgotPasswordPleaseEnterPassword),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -199,7 +206,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (newPassword != confirmPassword) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Passwords do not match'),
+          content: Text(l10n.forgotPasswordPasswordsDoNotMatch),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -217,7 +224,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Password has been reset successfully'),
+          content: Text(l10n.forgotPasswordResetSuccess),
           backgroundColor: Colors.green.shade600,
         ),
       );
@@ -235,7 +242,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to reset password: $e'),
+          content: Text('${l10n.forgotPasswordFailedToReset}: $e'),
           backgroundColor: Colors.red.shade600,
         ),
       );
@@ -247,35 +254,38 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   String get _title {
+    final l10n = AppLocalizations.of(context)!;
     switch (_step) {
       case 2:
-        return 'Enter Verification Code';
+        return l10n.forgotPasswordVerificationTitle;
       case 3:
-        return 'Reset Password';
+        return l10n.forgotPasswordResetTitle;
       default:
-        return 'Forgot Password';
+        return l10n.forgotPasswordTitle;
     }
   }
 
   String get _subtitle {
+    final l10n = AppLocalizations.of(context)!;
     switch (_step) {
       case 2:
-        return 'Enter the 6-digit code sent to your email.';
+        return l10n.forgotPasswordVerificationSubtitle;
       case 3:
-        return 'Create a new password for your account.';
+        return l10n.forgotPasswordResetSubtitle;
       default:
-        return 'Enter your email to reset your password.';
+        return l10n.forgotPasswordSubtitle;
     }
   }
 
   String get _primaryButtonText {
+    final l10n = AppLocalizations.of(context)!;
     switch (_step) {
       case 2:
-        return 'Continue';
+        return l10n.forgotPasswordContinue;
       case 3:
-        return 'Save New Password';
+        return l10n.forgotPasswordSaveNewPassword;
       default:
-        return 'Send Code';
+        return l10n.forgotPasswordSendCode;
     }
   }
 
@@ -357,10 +367,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   ),
                   child: TextField(
                     controller: _emailController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: InputBorder.none,
-                      hintText: 'Enter your email address',
+                      hintText: AppLocalizations.of(context)!.forgotPasswordEmailHint,
                     ),
                     keyboardType: TextInputType.emailAddress,
                   ),
@@ -374,10 +384,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   ),
                   child: TextField(
                     controller: _codeController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: InputBorder.none,
-                      hintText: 'Enter 6-digit code',
+                      hintText: AppLocalizations.of(context)!.forgotPasswordCodeHint,
                       counterText: '',
                     ),
                     keyboardType: TextInputType.number,
@@ -400,7 +410,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     decoration: InputDecoration(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: InputBorder.none,
-                      hintText: 'New password',
+                      hintText: AppLocalizations.of(context)!.forgotPasswordNewPasswordHint,
                       suffixIcon: IconButton(
                         icon: Icon(
                           _obscureNewPassword ? Icons.visibility : Icons.visibility_off,
@@ -475,7 +485,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     decoration: InputDecoration(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       border: InputBorder.none,
-                      hintText: 'Confirm new password',
+                      hintText: AppLocalizations.of(context)!.forgotPasswordConfirmPasswordHint,
                       suffixIcon: IconButton(
                         icon: Icon(
                           _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
@@ -532,9 +542,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   onTap: () {
                     Navigator.pop(context);
                   },
-                  child: const Text(
-                    'Back to Login',
-                    style: TextStyle(
+                  child: Text(
+                    AppLocalizations.of(context)!.forgotPasswordBackToLogin,
+                    style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: Color.fromARGB(255, 33, 33, 33), // Black color as in the image

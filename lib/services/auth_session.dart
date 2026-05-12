@@ -10,6 +10,7 @@ class AuthSession {
   static const String _keyBackendPhoneNumber = 'backend_phone_number';
   static const String _keyBackendLocation = 'backend_location';
   static const String _keyBackendProfilePicture = 'backend_profile_picture';
+  static const String _keyBackendAccessToken = 'backend_access_token';
 
   static Future<void> setBackendLoggedIn({
     required String email,
@@ -18,6 +19,7 @@ class AuthSession {
     String? phoneNumber,
     String? location,
     String? profilePicture,
+    String? accessToken,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyBackendLoggedIn, true);
@@ -43,6 +45,11 @@ class AuthSession {
     } else {
       await prefs.remove(_keyBackendProfilePicture);
     }
+    if (accessToken != null && accessToken.isNotEmpty) {
+      await prefs.setString(_keyBackendAccessToken, accessToken);
+    } else {
+      await prefs.remove(_keyBackendAccessToken);
+    }
   }
 
   static Future<void> clearBackendSession() async {
@@ -54,6 +61,7 @@ class AuthSession {
     await prefs.remove(_keyBackendPhoneNumber);
     await prefs.remove(_keyBackendLocation);
     await prefs.remove(_keyBackendProfilePicture);
+    await prefs.remove(_keyBackendAccessToken);
   }
 
   static Future<bool> isBackendLoggedIn() async {
@@ -89,5 +97,10 @@ class AuthSession {
   static Future<String?> getBackendProfilePicture() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_keyBackendProfilePicture);
+  }
+
+  static Future<String?> getBackendAccessToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyBackendAccessToken);
   }
 }

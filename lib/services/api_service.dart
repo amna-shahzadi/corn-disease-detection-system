@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart'; // Added import for MediaType
 import 'package:corn_disease_app/config/api_config.dart';
+import 'package:corn_disease_app/services/auth_session.dart';
 
 /// Individual disease detection with bounding box
 class DiseaseDetection {
@@ -39,6 +39,7 @@ class DetectDiseaseResponse {
   final List<DiseaseDetection>? detections;
   final int? totalDetections;
   final String? filename;
+  final List<String>? advice;
 
   DetectDiseaseResponse({
     this.diseaseName,
@@ -49,17 +50,19 @@ class DetectDiseaseResponse {
     this.detections,
     this.totalDetections,
     this.filename,
+    this.advice,
   });
 
   factory DetectDiseaseResponse.fromJson(Map<String, dynamic> json) {
-    // Handle the new API response format
+    // Handle new API response format
     if (json.containsKey('success') && json['success'] == true && json.containsKey('data')) {
       final data = json['data'] as Map<String, dynamic>? ?? {};
       
-      // Parse diseases from the new format
+      // Parse diseases from new format with specific disease types
       final diseasesData = data['diseases'] as Map<String, dynamic>? ?? {};
       final List<DiseaseDetection> allDetections = [];
       
+      // Parse each disease type
       diseasesData.forEach((diseaseKey, diseaseInfo) {
         if (diseaseInfo is Map<String, dynamic>) {
           final detections = diseaseInfo['detections'] as List? ?? [];
@@ -78,17 +81,31 @@ class DetectDiseaseResponse {
         primaryDetection = allDetections.first;
       }
       
+      // Determine if healthy based on disease types
+      final hasHealthyDetections = diseasesData.keys.any((key) => 
+        key.contains('healthy') && 
+        diseasesData[key] is Map && 
+        (diseasesData[key]['detections'] as List?)?.isNotEmpty == true
+      );
+      
+      final hasDiseaseDetections = diseasesData.keys.any((key) => 
+        !key.contains('healthy') && 
+        diseasesData[key] is Map && 
+        (diseasesData[key]['detections'] as List?)?.isNotEmpty == true
+      );
+      
       return DetectDiseaseResponse(
         diseaseName: primaryDetection?.disease,
         confidence: primaryDetection?.confidence != null 
             ? '${((primaryDetection!.confidence ?? 0) * 100).toStringAsFixed(1)}%' 
             : null,
-        isHealthy: allDetections.isEmpty,
-        message: json['message'] as String?,
+        isHealthy: hasHealthyDetections && !hasDiseaseDetections,
+        message: data['message'] as String? ?? data['status_message'] as String?,
         raw: json,
         detections: allDetections,
         totalDetections: data['total_detections'] as int?,
         filename: data['filename'] as String?,
+        advice: (data['advice'] as List?)?.map((e) => e.toString()).toList(),
       );
     }
     
@@ -135,18 +152,20 @@ class RegisterResponse {
   }
 }
 
-/// Response from login API: message, user_id, username, email.
+/// Response from login API: message, user_id, username, email, access_token.
 class LoginResponse {
   final String? message;
   final String? userId;
   final String? username;
   final String? email;
+  final String? accessToken;
 
   LoginResponse({
     this.message,
     this.userId,
     this.username,
     this.email,
+    this.accessToken,
   });
 }
 
@@ -405,7 +424,7 @@ class ApiService {
     throw ApiException(message, response.statusCode);
   }
 
-  /// Login response from backend: message, user_id, username, email.
+  /// Login response from backend: message, user_id, username, email, access_token.
   static LoginResponse? _parseLoginResponse(String body) {
     try {
       final json = jsonDecode(body) as Map<String, dynamic>?;
@@ -415,6 +434,7 @@ class ApiService {
         userId: json['user_id']?.toString(),
         username: json['username']?.toString(),
         email: json['email']?.toString(),
+        accessToken: json['access_token']?.toString(),
       );
     } catch (_) {
       return null;
@@ -629,6 +649,13 @@ class ApiService {
     final path = '${ApiConfig.userEditPath}/$userId/';
     final uri = Uri.parse('$_base$path');
     final request = http.MultipartRequest('PUT', uri);
+    
+    // Add authentication header
+    final accessToken = await AuthSession.getBackendAccessToken();
+    if (accessToken != null && accessToken.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    
     request.fields['username'] = username.trim();
     if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
       request.fields['phone_number'] = phoneNumber.trim();
@@ -735,7 +762,23 @@ class ApiService {
   static Future<Uint8List?> getProfileImageBytes(String userId) async {
     try {
       final profile = await getUserProfile(userId);
-      final imageUrl = profile.profilePicture;
+      
+      // Check both profile_picture and profile_picture_url fields
+      String? imageUrl = profile.profilePicture;
+      
+      // If profile_picture is the default placeholder or empty, try profile_picture_url
+      if (imageUrl == null || 
+          imageUrl.isEmpty || 
+          (imageUrl.contains('profile.jpg') && imageUrl.contains('/media/profile_pics/'))) {
+        // Try the profile_picture_url field instead
+        imageUrl = null; // We'll handle this in the next step
+        
+        // Access the profile_picture_url from the raw JSON response
+        final profileData = await _getRawProfileData(userId);
+        if (profileData != null && profileData['profile_picture_url'] != null) {
+          imageUrl = profileData['profile_picture_url'].toString();
+        }
+      }
       
       if (imageUrl == null || imageUrl.isEmpty) {
         return null;
@@ -746,10 +789,34 @@ class ApiService {
       
       if (response.statusCode == 200) {
         return response.bodyBytes;
+      } else if (response.statusCode == 404) {
+        // Profile image not found - return null to use fallback
+        return null;
       }
     } catch (e) {
       // If image fetch fails, return null and use fallback
     }
+    
+    return null;
+  }
+
+  /// Helper method to get raw profile data to access additional fields
+  static Future<Map<String, dynamic>?> _getRawProfileData(String userId) async {
+    try {
+      final path = '${ApiConfig.userProfilePath}/$userId/';
+      final uri = Uri.parse('$_base$path');
+      final response = await _client.get(uri).timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        try {
+          final json = jsonDecode(response.body) as Map<String, dynamic>?;
+          return json;
+        } catch (_) {}
+      }
+    } catch (e) {
+      // If raw data fetch fails, return null
+    }
+    
     return null;
   }
 
@@ -899,6 +966,31 @@ class ApiService {
       'count': 0,
       'data': [],
     };
+  }
+
+  /// Fetch location-specific tips and news from backend
+  /// GET /api/tips/?location={location}
+  static Future<List<Map<String, dynamic>>> getTipsAndNews({String? location}) async {
+    try {
+      var path = '/api/tips/';
+      if (location != null && location.isNotEmpty) {
+        path += '?location=${Uri.encodeComponent(location)}';
+      }
+      final uri = Uri.parse('$_base$path');
+      final response = await _client.get(uri).timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        try {
+          final json = jsonDecode(response.body) as Map<String, dynamic>?;
+          if (json != null && json['data'] is List) {
+            return List<Map<String, dynamic>>.from(json['data']);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {
+      // If API fails, return empty list to fallback to hardcoded tips
+    }
+    return [];
   }
 
   /// Health check / ping backend
